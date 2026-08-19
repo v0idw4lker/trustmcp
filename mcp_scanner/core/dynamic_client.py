@@ -35,6 +35,8 @@ import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.exceptions import MCPError
+from mcp.types import METHOD_NOT_FOUND
 
 from .models import Finding, Severity
 from .text_safety import find_hidden_unicode
@@ -139,24 +141,41 @@ def _scan_description_for_hidden_content(name: str, description: Optional[str], 
     )]
 
 
+async def _list_capability(coro_factory, capability_name: str, result: DynamicScanResult):
+    """
+    Calls a session.list_*() method, treating a JSON-RPC "Method not found"
+    response as the server legitimately not implementing that capability
+    (e.g. a prompts-only server has no tools/resources) rather than a
+    connection failure. Any other error still propagates so a genuinely
+    broken connection is still reported as such.
+    """
+    try:
+        return await asyncio.wait_for(coro_factory(), timeout=DEFAULT_TIMEOUT_SECONDS)
+    except MCPError as e:
+        if e.code == METHOD_NOT_FOUND:
+            result.checks_passed.append(f"Server does not implement '{capability_name}' (capability not offered — not an error).")
+            return None
+        raise
+
+
 async def _enumerate_session(session: ClientSession, result: DynamicScanResult, enable_fuzzing: bool) -> None:
     init_result = await asyncio.wait_for(session.initialize(), timeout=DEFAULT_TIMEOUT_SECONDS)
     result.checks_passed.append(
         f"Connection and initialize() succeeded (server: {init_result.server_info.name} v{init_result.server_info.version})"
     )
 
-    tools_result = await asyncio.wait_for(session.list_tools(), timeout=DEFAULT_TIMEOUT_SECONDS)
-    for t in tools_result.tools:
+    tools_result = await _list_capability(session.list_tools, "tools/list", result)
+    for t in (tools_result.tools if tools_result else []):
         result.tools.append({"name": t.name, "description": t.description, "input_schema": t.input_schema})
         result.findings.extend(_scan_description_for_hidden_content(t.name, t.description, "tool", result.target))
 
-    resources_result = await asyncio.wait_for(session.list_resources(), timeout=DEFAULT_TIMEOUT_SECONDS)
-    for r in resources_result.resources:
+    resources_result = await _list_capability(session.list_resources, "resources/list", result)
+    for r in (resources_result.resources if resources_result else []):
         result.resources.append({"uri": str(r.uri), "name": r.name, "description": r.description})
         result.findings.extend(_scan_description_for_hidden_content(r.name, r.description, "resource", result.target))
 
-    prompts_result = await asyncio.wait_for(session.list_prompts(), timeout=DEFAULT_TIMEOUT_SECONDS)
-    for p in prompts_result.prompts:
+    prompts_result = await _list_capability(session.list_prompts, "prompts/list", result)
+    for p in (prompts_result.prompts if prompts_result else []):
         result.prompts.append({"name": p.name, "description": p.description})
         result.findings.extend(_scan_description_for_hidden_content(p.name, p.description, "prompt", result.target))
 
