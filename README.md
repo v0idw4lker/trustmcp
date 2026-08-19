@@ -4,6 +4,8 @@
 
 Given an MCP server (source code, a running server, or both), `mcp-scanner` produces a vulnerability report and an **A–F** score, natively integrated into the **GitHub Security tab** via SARIF.
 
+Interested in the premium tier (semantic analysis, cross-server toxic-flow, continuous monitoring)? Join the waitlist at [mcp-scanner.netlify.app](https://mcp-scanner.netlify.app).
+
 ```
 Grade: F  Score: 45/100
 Total findings across all modules: 12
