@@ -32,8 +32,8 @@ from ..utils.exceptions import ReportWriteError
 SARIF_SCHEMA_URI = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
 SARIF_VERSION = "2.1.0"
 
-TOOL_NAME = "mcp-scanner"
-TOOL_INFORMATION_URI = "https://github.com/v0idw4lker/mcp-scanner"
+TOOL_NAME = "mcpwarden"
+TOOL_INFORMATION_URI = "https://github.com/v0idw4lker/mcpwarden"
 
 # SARIF "level" (error/warning/note) — used by most generic SARIF consumers
 # to decide how a result is displayed.

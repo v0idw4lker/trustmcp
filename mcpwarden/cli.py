@@ -1,8 +1,8 @@
 """
-mcp-scanner CLI — free tier entrypoint.
+mcpwarden CLI — free tier entrypoint.
 
 Usage:
-    mcp-scanner scan --path ./my-mcp-server --mode both \\
+    mcpwarden scan --path ./my-mcp-server --mode both \\
         --target "stdio:python3 server.py" --target "url:http://127.0.0.1:8931/mcp"
 
 Modes:
@@ -109,7 +109,7 @@ def _fail_on_exceeded(findings: list[Finding], threshold: str) -> bool:
 
 def _run_scan(args: argparse.Namespace) -> int:
     setup_logging(verbose=args.verbose)
-    console.rule("[bold blue]mcp-scanner — MCP Server Security Scan[/bold blue]")
+    console.rule("[bold blue]mcpwarden — MCP Server Security Scan[/bold blue]")
 
     all_findings: list[Finding] = []
     files_scanned = 0
@@ -199,8 +199,8 @@ def _run_scan(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="mcp-scanner", description="Security scanner for MCP (Model Context Protocol) servers.")
-    parser.add_argument("--version", action="version", version=f"mcp-scanner {__version__}")
+    parser = argparse.ArgumentParser(prog="mcpwarden", description="Security scanner for MCP (Model Context Protocol) servers.")
+    parser.add_argument("--version", action="version", version=f"mcpwarden {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     scan_parser = subparsers.add_parser("scan", help="Run a security scan against an MCP server.")

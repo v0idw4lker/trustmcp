@@ -1,7 +1,7 @@
-"""Tests for mcp_scanner.reporters.sarif_reporter."""
+"""Tests for mcpwarden.reporters.sarif_reporter."""
 
-from mcp_scanner.core.models import Finding, Severity
-from mcp_scanner.reporters.sarif_reporter import build_sarif
+from mcpwarden.core.models import Finding, Severity
+from mcpwarden.reporters.sarif_reporter import build_sarif
 
 
 def test_build_sarif_produces_one_rule_and_one_result():
@@ -13,7 +13,7 @@ def test_build_sarif_produces_one_rule_and_one_result():
     sarif_log = build_sarif(findings, tool_version="1.0.0")
 
     run = sarif_log["runs"][0]
-    assert run["tool"]["driver"]["name"] == "mcp-scanner"
+    assert run["tool"]["driver"]["name"] == "mcpwarden"
     assert len(run["tool"]["driver"]["rules"]) == 1
     assert run["tool"]["driver"]["rules"][0]["id"] == "static.dangerous-eval-exec"
     assert len(run["results"]) == 1

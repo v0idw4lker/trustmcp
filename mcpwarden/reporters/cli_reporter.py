@@ -40,7 +40,7 @@ def print_score_panel(console: Console, report: ScoreReport) -> None:
     console.print(Panel.fit(
         f"[bold {color}]Grade: {report.grade}[/bold {color}]   Score: [bold {color}]{report.score}/100[/bold {color}]\n"
         f"Total findings across all modules: {report.total_findings}",
-        title="mcp-scanner — Security Report",
+        title="mcpwarden — Security Report",
         border_style=color,
     ))
 

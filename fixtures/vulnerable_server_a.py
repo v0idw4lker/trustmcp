@@ -1,6 +1,6 @@
 """
 VULNERABLE test MCP server, used to validate the end-to-end scanner
-pipeline (mcp-scanner scan --mode both).
+pipeline (mcpwarden scan --mode both).
 
 Capability: file-read (tool name + description contain "read file").
 Vulnerability: the tool description contains a hidden zero-width Unicode

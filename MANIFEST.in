@@ -1,0 +1,14 @@
+include README.md
+include LICENSE
+include requirements.txt
+
+prune premium
+prune tests
+prune fixtures
+prune .git
+prune .pytest_cache
+prune .claude
+
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.pdf

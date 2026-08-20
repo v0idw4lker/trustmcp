@@ -32,7 +32,7 @@ from typing import Any, Optional
 from .models import Finding, Severity
 from .text_safety import find_hidden_unicode
 
-logger = logging.getLogger("mcp_scanner")
+logger = logging.getLogger("mcpwarden")
 
 # Directories skipped during the recursive walk: virtual environments, VCS
 # metadata, and build artifacts never contain code the user wrote, and

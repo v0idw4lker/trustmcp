@@ -27,7 +27,7 @@ from .models import Finding, Severity
 IGNORED_DIRS = {
     ".git", "__pycache__", "node_modules", "venv", ".venv", "env", "dist", "build",
     # "premium" is this repository's own local-only extension package
-    # (see mcp_scanner/core/plugins.py) — never part of a real target MCP
+    # (see mcpwarden/core/plugins.py) — never part of a real target MCP
     # server, only present here because this tool can scan its own repo.
     "premium",
 }

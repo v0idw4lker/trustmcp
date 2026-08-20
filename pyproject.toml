@@ -3,8 +3,8 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mcp-scanner"
-version = "1.0.0"
+name = "mcpwarden"
+version = "0.1.0"
 description = "Security scanner for MCP (Model Context Protocol) servers: static (SAST), dynamic (live), and authentication-posture analysis, with an A-F score and SARIF output for the GitHub Security tab."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,25 +32,27 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
     "rich>=13.7.0",
     "httpx>=0.28.1",
-    "mcp[cli]>=2.0.0",
+    "mcp[cli]>=2.0.0,<3.0.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
 [project.urls]
-Homepage = "https://github.com/v0idw4lker/mcp-scanner"
-Repository = "https://github.com/v0idw4lker/mcp-scanner"
-Issues = "https://github.com/v0idw4lker/mcp-scanner/issues"
+Homepage = "https://github.com/v0idw4lker/mcpwarden"
+Repository = "https://github.com/v0idw4lker/mcpwarden"
+Issues = "https://github.com/v0idw4lker/mcpwarden/issues"
 
-# Installed, the command is `mcp-scanner` — e.g.:
-#   uvx mcp-scanner@latest scan --path . --mode both --target "stdio:python3 server.py"
+# Installed, the command is `mcpwarden` — e.g.:
+#   uvx mcpwarden@latest scan --path . --mode both --target "stdio:python3 server.py"
 [project.scripts]
-mcp-scanner = "mcp_scanner.cli:main"
+mcpwarden = "mcpwarden.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["mcp_scanner*"]
+include = ["mcpwarden*"]

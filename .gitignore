@@ -24,7 +24,7 @@ ENV/
 
 # --- Premium modules (Semantic LLM analysis, Cross-Server Toxic-Flow) ---
 # Local-only, reserved for the paid SaaS tier. Never committed to this
-# public repository — see mcp_scanner/core/plugins.py for the extension
+# public repository — see mcpwarden/core/plugins.py for the extension
 # point the free tier exposes instead.
 premium/
 

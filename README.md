@@ -1,8 +1,8 @@
-# mcp-scanner
+# mcpwarden
 
 **Security scanner for MCP (Model Context Protocol) servers** — the protocol through which AI agents (Claude, ChatGPT, Cursor, etc.) connect to external tools.
 
-Given an MCP server (source code, a running server, or both), `mcp-scanner` produces a vulnerability report and an **A–F** score, natively integrated into the **GitHub Security tab** via SARIF.
+Given an MCP server (source code, a running server, or both), `mcpwarden` produces a vulnerability report and an **A–F** score, natively integrated into the **GitHub Security tab** via SARIF.
 
 Interested in the premium tier (semantic analysis, cross-server toxic-flow, continuous monitoring)? Join the waitlist at [mcp-scanner.netlify.app](https://mcp-scanner.netlify.app).
 
@@ -23,23 +23,23 @@ New to the command line? You'll need three things: [Python 3.10 or newer](https:
 
 ```bash
 # Direct execution without installation (recommended)
-uvx mcp-scanner@latest scan --path . --mode static
+uvx mcpwarden@latest scan --path . --mode static
 
 # Or permanent installation
-pip install mcp-scanner
-mcp-scanner scan --path . --mode static
+pip install mcpwarden
+mcpwarden scan --path . --mode static
 ```
 
 **Static scan only** (source code, no running server required):
 
 ```bash
-mcp-scanner scan --path ./my-mcp-server --mode static
+mcpwarden scan --path ./my-mcp-server --mode static
 ```
 
 **Full scan** (static + live dynamic analysis + auth posture + unified score + SARIF):
 
 ```bash
-mcp-scanner scan --path ./my-mcp-server --mode both \
+mcpwarden scan --path ./my-mcp-server --mode both \
   --target "stdio:python3 server.py" \
   --target "url:http://127.0.0.1:8931/mcp"
 ```
@@ -74,7 +74,7 @@ Four modules, all included in the free tier and always combined into a single sc
 
 ### OWASP MCP Top 10 Coverage
 
-`mcp-scanner` maps findings to official categories rather than inventing its own taxonomy:
+`mcpwarden` maps findings to official categories rather than inventing its own taxonomy:
 
 - `MCP01:2025` Token Mismanagement & Secret Exposure
 - `MCP02:2025` Privilege Escalation via Scope Creep
@@ -84,7 +84,7 @@ Four modules, all included in the free tier and always combined into a single sc
 - `MCP07:2025` Insufficient Authentication & Authorization
 - `MCP10:2025` Context Injection & Over-Sharing
 
-Findings without a clear match are **not** forced into a category — see [`mcp_scanner/core/scoring.py`](mcp_scanner/core/scoring.py).
+Findings without a clear match are **not** forced into a category — see [`mcpwarden/core/scoring.py`](mcpwarden/core/scoring.py).
 
 ---
 
@@ -92,7 +92,7 @@ Findings without a clear match are **not** forced into a category — see [`mcp_
 
 > The `confidence` field on every finding is a heuristic per-rule prior (how specific/unambiguous the signature is) — **not** a statistically measured false-positive rate. Empirical calibration against known-vulnerable and clean MCP servers was run 2026-08-19 — see [Validation](#-validation-dvmcp-benchmark-2026-08-19) below.
 
-The dependency-vulnerability list is a small, hand-curated set of notorious CVEs, checked entirely offline — it is **not** a substitute for `pip-audit`, `npm audit`, or [OSV.dev](https://osv.dev), which mcp-scanner does not call out to by design (no network dependency for a security tool's core scan).
+The dependency-vulnerability list is a small, hand-curated set of notorious CVEs, checked entirely offline — it is **not** a substitute for `pip-audit`, `npm audit`, or [OSV.dev](https://osv.dev), which mcpwarden does not call out to by design (no network dependency for a security tool's core scan).
 
 ---
 
@@ -108,7 +108,7 @@ Run against [Damn Vulnerable MCP Server](https://github.com/harishsg993010/damn-
 
 **Important caveat discovered during this run:** DVMCP's own repo has two independent implementations of most challenges — `server.py` (matches the documented vulnerability class in `docs/challenges.md`) and `server_sse.py` (what the official Docker image actually runs on ports 9001-9010). On 6 of 10 challenges these diverge, sometimes completely — e.g. the live "Tool Poisoning" container (port 9002) contains no hidden tool-description instructions at all; it's a command-injection/path-traversal server instead. Both variants are reported below, labeled separately, so neither number is cherry-picked.
 
-**Two upstream DVMCP bugs had to be worked around to get it running at all**, unrelated to mcp-scanner: `requirements.txt` pins `mcp[cli]>=0.5.0` unpinned, which today resolves to `mcp==2.0.0` — a version that removed `mcp.server.fastmcp`, so every challenge server crash-loops out of the box (fixed locally by pinning `<2.0.0`, which resolved to `1.29.0`). Challenge 5's canonical `server.py` additionally calls `FastMCP.resource(..., listed=False)`, a kwarg that doesn't exist in any current SDK version — it cannot start at all, on any modern `mcp` release. Since DVMCP ships only HTTP entrypoints (legacy SSE or raw uvicorn) and mcp-scanner's dynamic client only speaks Streamable HTTP (not legacy SSE), each challenge was instead driven over **stdio** by importing its `FastMCP`/`Challenge<N>Server` object directly and calling `.run(transport="stdio")` — same tool/resource/prompt logic, different wire transport only.
+**Two upstream DVMCP bugs had to be worked around to get it running at all**, unrelated to mcpwarden: `requirements.txt` pins `mcp[cli]>=0.5.0` unpinned, which today resolves to `mcp==2.0.0` — a version that removed `mcp.server.fastmcp`, so every challenge server crash-loops out of the box (fixed locally by pinning `<2.0.0`, which resolved to `1.29.0`). Challenge 5's canonical `server.py` additionally calls `FastMCP.resource(..., listed=False)`, a kwarg that doesn't exist in any current SDK version — it cannot start at all, on any modern `mcp` release. Since DVMCP ships only HTTP entrypoints (legacy SSE or raw uvicorn) and mcpwarden's dynamic client only speaks Streamable HTTP (not legacy SSE), each challenge was instead driven over **stdio** by importing its `FastMCP`/`Challenge<N>Server` object directly and calling `.run(transport="stdio")` — same tool/resource/prompt logic, different wire transport only.
 
 **Per-challenge results:**
 
@@ -118,7 +118,7 @@ Run against [Damn Vulnerable MCP Server](https://github.com/harishsg993010/damn-
 | 2 | Tool Poisoning | ❌ Miss — hidden `<IMPORTANT>`/`<HIDDEN>` instructions in tool descriptions are plain ASCII text; not caught by the hidden-*Unicode* check or any static rule (semantic/LLM analysis is paid-tier only) | ⚠️ Off-label hit — CRITICAL `subprocess-shell-true` (MCP05) + MEDIUM `path-traversal-open-param` (MCP05), but the deployed container replaces tool poisoning with command injection + arbitrary file read entirely; it does not exercise the named vulnerability |
 | 3 | Excessive Permission Scope | ✅ Hit — 2× MEDIUM `path-traversal-open-param` (MCP05), directly on `read_file`/`search_files`' unrestricted `open()` | ✅ Hit — same pattern, same file-access tools |
 | 4 | Rug Pull Attack | ❌ Miss — the `__doc__` mutation after 3 calls (the actual rug-pull mechanism) is not detected; the one CRITICAL `secret-aws-key` (MCP01) finding is an unrelated, incidental hardcoded key elsewhere in the file | ❌ Miss — 0 findings beyond generic auth; deployed variant strips out the secret text and the mutation logic |
-| 5 | Tool Shadowing | ❌ Miss — dynamic scan couldn't connect (`server.py` itself crashes on the `listed=False` bug above, unrelated to mcp-scanner); static analysis caught real but unrelated issues (4× CRITICAL `dangerous-eval-exec`, 2× CRITICAL `secret-stripe-key`, both MCP05/MCP01) elsewhere in the file, not the name-collision shadowing mechanism | ❌ Miss — only a MEDIUM `dynamic.fuzz-timeout` on `get_user_roles`; the deployed variant is a different role-check server, not the shadowing calculators |
+| 5 | Tool Shadowing | ❌ Miss — dynamic scan couldn't connect (`server.py` itself crashes on the `listed=False` bug above, unrelated to mcpwarden); static analysis caught real but unrelated issues (4× CRITICAL `dangerous-eval-exec`, 2× CRITICAL `secret-stripe-key`, both MCP05/MCP01) elsewhere in the file, not the name-collision shadowing mechanism | ❌ Miss — only a MEDIUM `dynamic.fuzz-timeout` on `get_user_roles`; the deployed variant is a different role-check server, not the shadowing calculators |
 | 6 | Indirect Prompt Injection | ❌ Miss — no finding relates to unsanitized external/document data | ❌ Miss — same |
 | 7 | Token Theft | ❌ Miss — tokens are hardcoded JWTs and custom-prefixed API keys (`epro_api_...`, `cbx_api_...`); none match the scanner's curated secret-regex list (OpenAI/Anthropic/GitHub/AWS/Stripe/Google/Slack/PEM) | ❌ Miss — same reason, different tool names |
 | 8 | Malicious Code Execution | ✅ Hit — CRITICAL `subprocess-shell-true` (MCP05) on `execute_shell_command` + MEDIUM `path-traversal-open-param` (MCP05) on `analyze_log_file` | ✅ Hit — CRITICAL `dangerous-eval-exec` (MCP05); deployed variant's `evaluate_expression` calls `eval()` directly |
@@ -127,7 +127,7 @@ Run against [Damn Vulnerable MCP Server](https://github.com/harishsg993010/damn-
 
 *(Every finding above also produced a generic HIGH `auth.no-mechanism-detected` (MCP07) — omitted from each cell for brevity; it fired on all 10 challenges both ways.)*
 
-**False-positive testing:** ran full `--mode both` scans (static + stdio dynamic, fuzzing on) against 3 clean servers from the official SDK's `examples/` — `mcpserver/simple_echo.py`, `servers/simple-prompt`, `servers/simple-pagination`. Static analysis: 0 findings on all 3 (no false secret/eval/subprocess/traversal/Unicode matches). Dynamic analysis: while testing `simple-prompt` (a prompts-only server with no `tools`/`resources` capability), a real mcp-scanner bug surfaced — `dynamic_client.py`'s `_enumerate_session()` called `list_tools()`/`list_resources()`/`list_prompts()` unconditionally with no per-call exception handling, so a server correctly declining an unsupported capability (JSON-RPC "Method not found") was misreported as a HIGH-severity connection failure. **Fixed** in this session (`_list_capability()` now catches `MCPError` with code `METHOD_NOT_FOUND` per call and records it as a passed check, not a finding); all 3 clean servers now correctly show 0 vulnerability findings.
+**False-positive testing:** ran full `--mode both` scans (static + stdio dynamic, fuzzing on) against 3 clean servers from the official SDK's `examples/` — `mcpserver/simple_echo.py`, `servers/simple-prompt`, `servers/simple-pagination`. Static analysis: 0 findings on all 3 (no false secret/eval/subprocess/traversal/Unicode matches). Dynamic analysis: while testing `simple-prompt` (a prompts-only server with no `tools`/`resources` capability), a real mcpwarden bug surfaced — `dynamic_client.py`'s `_enumerate_session()` called `list_tools()`/`list_resources()`/`list_prompts()` unconditionally with no per-call exception handling, so a server correctly declining an unsupported capability (JSON-RPC "Method not found") was misreported as a HIGH-severity connection failure. **Fixed** in this session (`_list_capability()` now catches `MCPError` with code `METHOD_NOT_FOUND` per call and records it as a passed check, not a finding); all 3 clean servers now correctly show 0 vulnerability findings.
 
 **Known limitation this run confirms:** the free tier has no semantic/LLM analysis, so any vulnerability that lives entirely in plausible-sounding natural-language tool-description text (tool poisoning, rug-pull description mutation, indirect prompt injection) is structurally invisible to it — that's exactly what the paid semantic module (see Enterprise tier below) is for. Regex-based secret detection also has a fixed pattern list; JWTs and custom-prefixed API keys outside that list won't be caught.
 
@@ -144,27 +144,27 @@ The paid tier builds on top of it with capabilities that go beyond what a single
 - **Continuous monitoring** — a one-time scan cannot catch a *rug pull*: a server that passes review cleanly, then changes its tool descriptions or scope after gaining trust. This requires fingerprinting + a saved baseline + drift alerting across scans over time.
 - API access for CI/CD integration beyond static SARIF, and a verified, embeddable README badge for MCP registries.
 
-The free tier's `mcp_scanner/core/plugins.py` defines the extension point these capabilities plug into — the architecture already supports them; they are simply not distributed in this open-source package.
+The free tier's `mcpwarden/core/plugins.py` defines the extension point these capabilities plug into — the architecture already supports them; they are simply not distributed in this open-source package.
 
-📩 Interested in early access? Open an [issue](https://github.com/v0idw4lker/mcp-scanner/issues) or contact [@v0idw4lker](https://github.com/v0idw4lker).
+📩 Interested in early access? Open an [issue](https://github.com/v0idw4lker/mcpwarden/issues) or contact [@v0idw4lker](https://github.com/v0idw4lker).
 
 ---
 
 ## 🧪 Quick Testing
 
 ```bash
-git clone https://github.com/v0idw4lker/mcp-scanner
-cd mcp-scanner
+git clone https://github.com/v0idw4lker/mcpwarden
+cd mcpwarden
 pip install -r requirements.txt
 
 # Static scan on this repo itself (fixtures/ is intentionally vulnerable)
-mcp-scanner scan --path . --mode static
+mcpwarden scan --path . --mode static
 
 # Full pipeline against a fixture server
-mcp-scanner scan --path . --mode both --target "stdio:python3 fixtures/target_server_stdio.py"
+mcpwarden scan --path . --mode both --target "stdio:python3 fixtures/target_server_stdio.py"
 
 # Two fixture servers at once — a good demo of live multi-target scanning
-mcp-scanner scan --path . --mode both \
+mcpwarden scan --path . --mode both \
   --target "stdio:python3 fixtures/vulnerable_server_a.py" \
   --target "stdio:python3 fixtures/vulnerable_server_b.py"
 ```
@@ -190,9 +190,9 @@ pytest
 ## Project Structure
 
 ```
-mcp-scanner/
-├── mcp_scanner/                # installable package — the free tier
-│   ├── cli.py                  # entrypoint: `mcp-scanner scan --path ... --mode both`
+mcpwarden/
+├── mcpwarden/                   # installable package — the free tier
+│   ├── cli.py                   # entrypoint: `mcpwarden scan --path ... --mode both`
 │   ├── core/
 │   │   ├── models.py           # shared Finding contract used by every module + reporter
 │   │   ├── text_safety.py      # hidden/obfuscated Unicode detection (shared static + dynamic)

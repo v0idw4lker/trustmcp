@@ -1,7 +1,7 @@
-"""Tests for mcp_scanner.core.scoring."""
+"""Tests for mcpwarden.core.scoring."""
 
-from mcp_scanner.core.models import Finding, Severity
-from mcp_scanner.core.scoring import calculate_score_report
+from mcpwarden.core.models import Finding, Severity
+from mcpwarden.core.scoring import calculate_score_report
 
 
 def _finding(rule_id: str, severity: Severity) -> Finding:
