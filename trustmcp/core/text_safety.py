@@ -25,8 +25,8 @@ import unicodedata
 #     for "ASCII smuggling" to hide instructions from/for LLMs inside
 #     otherwise normal-looking text, since most fonts render them as nothing.
 HIDDEN_UNICODE_PATTERN = re.compile(
-    "[​‌‍﻿⁠᠎"
-    "‪-‮⁦-⁩"
+    "[​‌‍﻿⁠᠎"  # trustmcp: ignore[static.hidden-unicode]
+    "‪-‮⁦-⁩"  # trustmcp: ignore[static.hidden-unicode]
     "\U000e0000-\U000e007f]"
 )
 

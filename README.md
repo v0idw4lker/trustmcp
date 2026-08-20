@@ -88,6 +88,29 @@ Findings without a clear match are **not** forced into a category — see [`trus
 
 ---
 
+## 🔇 Suppressing findings
+
+A specific finding can be suppressed with an inline comment, the same convention most linters use (`# noqa`, `# pylint: disable=...`):
+
+```python
+os.system(cmd)  # trustmcp: ignore[static.os-system]
+
+# trustmcp: ignore[static.path-traversal-open-param]
+with open(user_path) as f:
+    ...
+
+eval(user_input)  # trustmcp: ignore   <- suppresses every rule on this line, not just one
+```
+
+- `# trustmcp: ignore` suppresses **all** findings on that line.
+- `# trustmcp: ignore[rule.id]` suppresses only the named rule; comma-separate several: `# trustmcp: ignore[static.os-system, static.dangerous-eval-exec]`.
+- The comment is honored on the finding's own line, **or** the line immediately above it — useful when the flagged line is long or auto-formatted.
+- Works for AST-based findings in Python source, and for the line-based checks over `requirements.txt`, `mcp.json`/`manifest.json`, and `package.json` (in JSON files the comment is stripped before parsing, so it doesn't break `json.loads`).
+
+Use it for confirmed false positives or accepted risk, not to silence findings you haven't actually looked at.
+
+---
+
 ## 🔬 Honesty Over Marketing
 
 > The `confidence` field on every finding is a heuristic per-rule prior (how specific/unambiguous the signature is) — **not** a statistically measured false-positive rate. Empirical calibration against known-vulnerable and clean MCP servers was run 2026-08-19 — see [Validation](#-validation-dvmcp-benchmark-2026-08-19) below.

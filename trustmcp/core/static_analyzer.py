@@ -52,6 +52,64 @@ CONFIDENCE_DISCLAIMER = (
     "known-vulnerable and clean MCP servers is tracked on the project roadmap."
 )
 
+# --- Inline suppression comments --------------------------------------------
+#
+# `# trustmcp: ignore` (all rules) or `# trustmcp: ignore[rule.id, other.id]`
+# (specific rules only), the same convention linters use (# noqa, # pylint:
+# disable=...). Honored on the finding's own line, or the line immediately
+# above it. Works uniformly for AST findings (scan_python_file) and every
+# line-based check (requirements.txt, mcp.json/manifest.json, package.json)
+# because it only ever looks at raw source lines by line number — it never
+# needs to know how a given finding was produced.
+_SUPPRESS_RE = re.compile(r"#\s*trustmcp:\s*ignore(?:\[([^\]]*)\])?")
+
+
+def _parse_suppression_directive(line: str) -> Optional[set[str]]:
+    """
+    Returns None if `line` carries no suppression comment, {"*"} for a
+    blanket `# trustmcp: ignore`, or the set of rule_ids named in
+    `# trustmcp: ignore[rule.a, rule.b]`.
+    """
+    match = _SUPPRESS_RE.search(line)
+    if not match:
+        return None
+    rules_str = match.group(1)
+    if not rules_str:
+        return {"*"}
+    rules = {r.strip() for r in rules_str.split(",") if r.strip()}
+    return rules or {"*"}
+
+
+def _filter_suppressed(findings: list[Finding], lines: list[str]) -> list[Finding]:
+    """Drops findings whose own line, or the line above it, carries a matching suppression comment."""
+    kept: list[Finding] = []
+    for f in findings:
+        idx = f.line - 1
+        directive = _parse_suppression_directive(lines[idx]) if 0 <= idx < len(lines) else None
+        if directive is None and 0 <= idx - 1 < len(lines):
+            directive = _parse_suppression_directive(lines[idx - 1])
+        if directive and ("*" in directive or f.rule_id in directive):
+            continue
+        kept.append(f)
+    return kept
+
+
+def _strip_suppression_comments_for_json(content: str) -> str:
+    """
+    JSON has no comment syntax, so a literal `# trustmcp: ignore[...]` left
+    in an mcp.json/manifest.json/package.json would otherwise fail to parse.
+    Strips only text matching our specific suppression syntax (never a bare
+    `#`, which could legitimately appear inside a JSON string value) before
+    handing content to json.loads. Callers still use the ORIGINAL lines (with
+    the comment intact) for line numbers and for detecting the suppression itself.
+    """
+    out_lines = []
+    for line in content.splitlines():
+        match = _SUPPRESS_RE.search(line)
+        out_lines.append(line[: match.start()] if match else line)
+    return "\n".join(out_lines)
+
+
 SECRET_PATTERNS: dict[str, dict[str, Any]] = {
     "static.secret-openai-key": {
         "title": "Exposed OpenAI API key",
@@ -175,7 +233,7 @@ class SecurityASTVisitor(ast.NodeVisitor):
                     f"{func.id}(...)",
                 )
             elif func.id == "open" and node.args:
-                self._check_path_traversal(node, node.args[0])
+                self._check_path_traversal(node, node.args[0], self._open_mode_category(node))
 
         elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
             owner, attr = func.value.id, func.attr
@@ -224,7 +282,32 @@ class SecurityASTVisitor(ast.NodeVisitor):
 
         self.generic_visit(node)
 
-    def _check_path_traversal(self, call_node: ast.Call, path_arg: ast.expr) -> None:
+    @staticmethod
+    def _open_mode_category(call_node: ast.Call) -> str:
+        """
+        Classifies open()'s mode argument (second positional arg, or a
+        `mode=` keyword) as "read", "write" (any of w/a/x and their
+        variants — this is an arbitrary-file-WRITE risk, not a read one),
+        or "unknown" (mode is present but not a string literal trustmcp can
+        evaluate statically, e.g. a variable — treated like "read" so the
+        existing, more cautious behaviour is preserved rather than silently
+        dropped). No mode argument at all means Python's default "r".
+        """
+        mode_node: Optional[ast.expr] = None
+        if len(call_node.args) >= 2:
+            mode_node = call_node.args[1]
+        else:
+            for kw in call_node.keywords:
+                if kw.arg == "mode":
+                    mode_node = kw.value
+                    break
+        if mode_node is None:
+            return "read"
+        if isinstance(mode_node, ast.Constant) and isinstance(mode_node.value, str):
+            return "write" if mode_node.value[:1] in ("w", "a", "x") else "read"
+        return "unknown"
+
+    def _check_path_traversal(self, call_node: ast.Call, path_arg: ast.expr, mode_category: str = "read") -> None:
         """
         Flags open(<expr>) when <expr> references a function parameter
         anywhere in its expression tree — not only a bare parameter name.
@@ -233,11 +316,28 @@ class SecurityASTVisitor(ast.NodeVisitor):
         not just the narrow open(user_path) case, since those are just as
         exploitable if user_path is attacker-controlled (e.g. an MCP tool
         argument) and reaches open() without validation.
+
+        mode_category distinguishes read from write/append: open(path, "w")
+        cannot leak file contents the way open(path, "r") can, so it gets a
+        separate, lower-severity finding with corrected wording rather than
+        being reported as arbitrary file READ.
         """
         referenced_params = {
             n.id for n in ast.walk(path_arg) if isinstance(n, ast.Name)
         } & self._params_in_scope()
         if not referenced_params:
+            return
+        if mode_category == "write":
+            self._add(
+                call_node, "static.path-traversal-open-param",
+                "Possible path traversal (open() built from a function parameter, write mode)",
+                f"open(..., <write/append mode>) is built from parameter(s) {sorted(referenced_params)} without visible path validation. "
+                "If the parameter comes from external input (e.g. an MCP tool call), this may allow WRITING or overwriting "
+                "arbitrary files — this is a distinct risk from arbitrary file READ, not a duplicate of it.",
+                Severity.LOW, "CWE-22", 40,
+                "Normalize and validate the path (os.path.abspath / Path.resolve) and confirm it stays within an allowed directory before opening it for writing.",
+                "open(<expression referencing a parameter>, \"w\"/\"a\"/\"x\"...)",
+            )
             return
         self._add(
             call_node, "static.path-traversal-open-param",
@@ -263,6 +363,7 @@ def _dedupe(findings: list[Finding]) -> list[Finding]:
 
 def scan_python_file(file_path: str) -> list[Finding]:
     findings: list[Finding] = []
+    lines: list[str] = []
     try:
         with open(file_path, "r", encoding="utf-8-sig") as fh:
             content = fh.read()
@@ -315,7 +416,7 @@ def scan_python_file(file_path: str) -> list[Finding]:
         ))
         logger.warning("Error reading %s: %s", file_path, e)
 
-    return _dedupe(findings)
+    return _dedupe(_filter_suppressed(findings, lines))
 
 
 # --- Dependency auditing ---------------------------------------------------
@@ -332,6 +433,70 @@ def _version_lte(a: tuple[int, ...], b: tuple[int, ...]) -> bool:
     a = a + (0,) * (length - len(a))
     b = b + (0,) * (length - len(b))
     return a <= b
+
+
+_PIP_OPERATOR_RE = re.compile(r"(==|~=|!=|<=|>=|<|>)\s*([0-9][0-9A-Za-z.\-]*)")
+
+
+def _pip_lowest_resolvable_version(version_spec: str) -> tuple[Optional[tuple[int, ...]], bool]:
+    """
+    Returns (lowest_version_the_constraint_can_resolve_to, is_exact).
+
+    is_exact=True means the constraint pins to exactly one version (a bare
+    `==`), so a match against a vulnerable version is a confirmed hit. When
+    is_exact=False the lowest bound merely establishes what the constraint
+    PERMITS — the resolver is free to (and normally will) pick something
+    newer — so a match there is a weaker, "permits a vulnerable version"
+    claim, not a confirmed one.
+
+    lowest_version is None when the spec has no lower-bound-establishing
+    operator at all (no specifier, or only `<`/`<=`/`!=`), meaning the
+    version genuinely cannot be determined from this line.
+    """
+    ops = _PIP_OPERATOR_RE.findall(version_spec)
+    exact = [_parse_version(v) for op, v in ops if op == "=="]
+    exact = [v for v in exact if v is not None]
+    if exact:
+        return exact[0], True
+    lowers = [_parse_version(v) for op, v in ops if op in (">=", ">", "~=")]
+    lowers = [v for v in lowers if v is not None]
+    if lowers:
+        return max(lowers), False
+    return None, False
+
+
+def _pip_is_bounded_range(version_spec: str) -> bool:
+    """
+    True only when the constraint has BOTH a lower bound (>=, >) and an
+    upper bound (<, <=) — a genuine range like ">=2.0,<3.0". A constraint
+    with only one side (">=2.0" unbounded above, or "<3.0" unbounded below)
+    is not a bounded range and must keep firing dependency-weak-constraint.
+    """
+    ops = {op for op, _ in _PIP_OPERATOR_RE.findall(version_spec)}
+    return bool(ops & {">=", ">"}) and bool(ops & {"<", "<="})
+
+
+_NPM_OPERATOR_RE = re.compile(r"(>=|<=|>|<)\s*([0-9][0-9A-Za-z.\-]*)")
+_NPM_BARE_VERSION_RE = re.compile(r"^[\^~]?\s*([0-9][0-9A-Za-z.\-]*)")
+
+
+def _npm_lowest_resolvable_version(version_spec: str) -> tuple[Optional[tuple[int, ...]], bool]:
+    """npm/semver equivalent of _pip_lowest_resolvable_version. A bare version ("4.17.20") is an
+    exact pin in npm; "^"/"~" and explicit >=/> establish a lower bound only, not an exact match."""
+    spec = version_spec.strip()
+    if not spec or spec in ("*", "latest"):
+        return None, False
+    ops = _NPM_OPERATOR_RE.findall(spec)
+    if ops:
+        lowers = [_parse_version(v) for op, v in ops if op in (">=", ">")]
+        lowers = [v for v in lowers if v is not None]
+        return (max(lowers), False) if lowers else (None, False)
+    match = _NPM_BARE_VERSION_RE.match(spec)
+    if not match:
+        return None, False
+    parsed = _parse_version(match.group(1))
+    is_exact = parsed is not None and not spec.startswith(("^", "~"))
+    return parsed, is_exact
 
 
 # Non-exhaustive, hand-curated list of package versions with well-known,
@@ -368,45 +533,66 @@ def _scan_requirements_txt_file(req_path: str) -> list[Finding]:
     findings: list[Finding] = []
 
     with open(req_path, "r", encoding="utf-8-sig") as fh:
-        for line_num, raw_line in enumerate(fh, 1):
-            line = raw_line.strip()
-            if not line or line.startswith("#") or line.startswith("git+") or line.startswith("-"):
-                continue
+        raw_lines = fh.readlines()
 
-            has_strong = any(op in line for op in _STRONG_PIN_OPERATORS)
-            has_weak = any(op in line for op in _WEAK_PIN_OPERATORS)
+    for line_num, raw_line in enumerate(raw_lines, 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("git+") or line.startswith("-"):
+            continue
 
-            if not has_strong and not has_weak:
-                findings.append(Finding(
-                    module="static", rule_id="static.dependency-unpinned", title="Dependency without a version pin",
-                    description="The dependency has no version specifier at all, so it installs whatever is newest at build time.",
-                    severity=Severity.MEDIUM, confidence=90, location=req_path, line=line_num,
-                    cwe="CWE-1104", remediation="Pin an exact version (==) or a compatible-release constraint (~=).",
-                    code_snippet=line,
-                ))
-            elif not has_strong:
-                # Functional fix versus the previous version of this check:
-                # a bound like ">=2.0" used to be treated as "pinned" simply
-                # because SOME operator was present. It is not pinned — it
-                # is unbounded above and can silently resolve to a future,
-                # unvetted (or vulnerable) release.
-                findings.append(Finding(
-                    module="static", rule_id="static.dependency-weak-constraint", title="Dependency with a weak, unbounded version constraint",
-                    description="The dependency uses an inequality constraint (e.g. >=, <) with no exact or upper-bounded pin, so it can still resolve to an unvetted future version.",
-                    severity=Severity.LOW, confidence=60, location=req_path, line=line_num,
-                    cwe="CWE-1104", remediation="Prefer an exact pin (==) or a compatible-release constraint (~=), backed by a lockfile.",
-                    code_snippet=line,
-                ))
+        has_strong = any(op in line for op in _STRONG_PIN_OPERATORS)
+        has_weak = any(op in line for op in _WEAK_PIN_OPERATORS)
 
-            match = re.match(r"^([A-Za-z0-9_.\-]+)", line)
-            if match:
-                pkg = match.group(1).lower()
-                if pkg in KNOWN_VULNERABLE_PYTHON_PACKAGES:
-                    max_vuln, advisory = KNOWN_VULNERABLE_PYTHON_PACKAGES[pkg]
-                    version_match = re.search(r"==\s*([0-9][0-9A-Za-z.\-]*)", line)
-                    version = _parse_version(version_match.group(1)) if version_match else None
-                    max_vuln_parsed = _parse_version(max_vuln)
-                    if version is None or (max_vuln_parsed and _version_lte(version, max_vuln_parsed)):
+        if not has_strong and not has_weak:
+            findings.append(Finding(
+                module="static", rule_id="static.dependency-unpinned", title="Dependency without a version pin",
+                description="The dependency has no version specifier at all, so it installs whatever is newest at build time.",
+                severity=Severity.MEDIUM, confidence=90, location=req_path, line=line_num,
+                cwe="CWE-1104", remediation="Pin an exact version (==) or a compatible-release constraint (~=).",
+                code_snippet=line,
+            ))
+        elif not has_strong and not _pip_is_bounded_range(line):
+            # Functional fix versus the previous version of this check:
+            # a bound like ">=2.0" used to be treated as "pinned" simply
+            # because SOME operator was present. It is not pinned — it
+            # is unbounded above and can silently resolve to a future,
+            # unvetted (or vulnerable) release. But if the line ALSO has an
+            # upper bound (e.g. ">=2.0,<3.0") it is a genuinely bounded
+            # range, not an unbounded one — that case is deliberately not
+            # flagged here rather than reported with wording ("no ... upper-
+            # bounded pin") that the printed snippet directly contradicts.
+            findings.append(Finding(
+                module="static", rule_id="static.dependency-weak-constraint", title="Dependency with a weak, unbounded version constraint",
+                description="The dependency uses an inequality constraint (e.g. >=, <) with no exact or upper-bounded pin, so it can still resolve to an unvetted future version.",
+                severity=Severity.LOW, confidence=60, location=req_path, line=line_num,
+                cwe="CWE-1104", remediation="Prefer an exact pin (==) or a compatible-release constraint (~=), backed by a lockfile.",
+                code_snippet=line,
+            ))
+
+        match = re.match(r"^([A-Za-z0-9_.\-]+)", line)
+        if match:
+            pkg = match.group(1).lower()
+            if pkg in KNOWN_VULNERABLE_PYTHON_PACKAGES:
+                max_vuln, advisory = KNOWN_VULNERABLE_PYTHON_PACKAGES[pkg]
+                max_vuln_parsed = _parse_version(max_vuln)
+                lowest, is_exact = _pip_lowest_resolvable_version(line)
+
+                if lowest is None:
+                    findings.append(Finding(
+                        module="static", rule_id="static.dependency-known-vulnerable",
+                        title=f"Possibly known-vulnerable dependency: {pkg} (version undetermined)",
+                        description=(
+                            f"'{pkg}' matches a package with a well-known, high-impact advisory, but the "
+                            f"version could not be determined from this line's constraint, so this cannot be "
+                            f"confirmed either way: {advisory}"
+                        ),
+                        severity=Severity.LOW, confidence=25, location=req_path, line=line_num,
+                        cwe="CWE-1104",
+                        remediation=f"Pin '{pkg}' to an exact version so its status against the advisory above can be determined, or run pip-audit for full, up-to-date coverage.",
+                        code_snippet=line,
+                    ))
+                elif max_vuln_parsed and _version_lte(lowest, max_vuln_parsed):
+                    if is_exact:
                         findings.append(Finding(
                             module="static", rule_id="static.dependency-known-vulnerable", title=f"Known-vulnerable dependency: {pkg}",
                             description=f"'{pkg}' matches a package with a well-known, high-impact advisory: {advisory}",
@@ -415,8 +601,24 @@ def _scan_requirements_txt_file(req_path: str) -> list[Finding]:
                             remediation=f"Upgrade '{pkg}' past the version fixed in the advisory above, or run pip-audit for full, up-to-date coverage.",
                             code_snippet=line,
                         ))
+                    else:
+                        findings.append(Finding(
+                            module="static", rule_id="static.dependency-known-vulnerable",
+                            title=f"Dependency constraint permits a known-vulnerable version: {pkg}",
+                            description=(
+                                f"'{pkg}''s version constraint permits resolving down to a version covered by a "
+                                f"well-known, high-impact advisory: {advisory} This does not confirm the version "
+                                f"that actually gets installed is vulnerable — only that the constraint does not rule it out."
+                            ),
+                            severity=Severity.HIGH, confidence=40, location=req_path, line=line_num,
+                            cwe="CWE-1104",
+                            remediation=f"Pin '{pkg}' to a version above the one fixed in the advisory above (==, or a lower bound past it), or run pip-audit for full, up-to-date coverage.",
+                            code_snippet=line,
+                        ))
+                # else: the lowest version the constraint can resolve to is already past the
+                # advisory's fixed version — genuinely not vulnerable, so nothing is reported.
 
-    return findings
+    return _filter_suppressed(findings, [l.rstrip("\n") for l in raw_lines])
 
 
 def _scan_package_json_file(pkg_path: str) -> list[Finding]:
@@ -425,7 +627,8 @@ def _scan_package_json_file(pkg_path: str) -> list[Finding]:
 
     try:
         with open(pkg_path, "r", encoding="utf-8-sig") as fh:
-            data = json.load(fh)
+            content_str = fh.read()
+        data = json.loads(_strip_suppression_comments_for_json(content_str))
     except (OSError, json.JSONDecodeError) as e:
         findings.append(Finding(
             module="static", rule_id="static.package-json-invalid", title="Invalid package.json",
@@ -435,16 +638,19 @@ def _scan_package_json_file(pkg_path: str) -> list[Finding]:
         ))
         return findings
 
+    lines = content_str.splitlines()
+
     dependency_blocks = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
     for pkg, version_spec in dependency_blocks.items():
         version_spec = str(version_spec)
         pkg_lower = pkg.lower()
+        pkg_line = _find_line_for_key(lines, pkg)
 
         if version_spec in ("*", "latest", "") or version_spec.endswith(".x"):
             findings.append(Finding(
                 module="static", rule_id="static.dependency-unpinned", title="npm dependency without a real version pin",
                 description=f"'{pkg}' is declared as '{version_spec}', which resolves to whatever is newest at install time.",
-                severity=Severity.MEDIUM, confidence=85, location=pkg_path, line=1,
+                severity=Severity.MEDIUM, confidence=85, location=pkg_path, line=pkg_line,
                 cwe="CWE-1104", remediation="Pin an exact version and commit a package-lock.json.",
                 code_snippet=f'"{pkg}": "{version_spec}"',
             ))
@@ -452,25 +658,55 @@ def _scan_package_json_file(pkg_path: str) -> list[Finding]:
             findings.append(Finding(
                 module="static", rule_id="static.dependency-weak-constraint", title="npm dependency with a semver range constraint",
                 description=f"'{pkg}' is declared as '{version_spec}' (semver range), which can still resolve to an unvetted newer version without a lockfile.",
-                severity=Severity.LOW, confidence=50, location=pkg_path, line=1,
+                severity=Severity.LOW, confidence=50, location=pkg_path, line=pkg_line,
                 cwe="CWE-1104", remediation="Commit package-lock.json (or an equivalent lockfile) so installs are reproducible.",
                 code_snippet=f'"{pkg}": "{version_spec}"',
             ))
 
         if pkg_lower in KNOWN_VULNERABLE_NPM_PACKAGES:
             max_vuln, advisory = KNOWN_VULNERABLE_NPM_PACKAGES[pkg_lower]
-            base_version = re.sub(r"^[\^~>=<\s]+", "", version_spec)
-            version = _parse_version(base_version)
             max_vuln_parsed = _parse_version(max_vuln)
-            if version is None or (max_vuln_parsed and _version_lte(version, max_vuln_parsed)):
+            lowest, is_exact = _npm_lowest_resolvable_version(version_spec)
+
+            if lowest is None:
                 findings.append(Finding(
-                    module="static", rule_id="static.dependency-known-vulnerable", title=f"Known-vulnerable dependency: {pkg}",
-                    description=f"'{pkg}' matches a package with a well-known, high-impact advisory: {advisory}",
-                    severity=Severity.HIGH, confidence=70, location=pkg_path, line=1,
+                    module="static", rule_id="static.dependency-known-vulnerable",
+                    title=f"Possibly known-vulnerable dependency: {pkg} (version undetermined)",
+                    description=(
+                        f"'{pkg}' matches a package with a well-known, high-impact advisory, but the version "
+                        f"could not be determined from '{version_spec}', so this cannot be confirmed either way: {advisory}"
+                    ),
+                    severity=Severity.LOW, confidence=25, location=pkg_path, line=pkg_line,
                     cwe="CWE-1104",
-                    remediation=f"Upgrade '{pkg}' past the version fixed in the advisory above, or run npm audit for full, up-to-date coverage.",
+                    remediation=f"Pin '{pkg}' to an exact version so its status against the advisory above can be determined, or run npm audit for full, up-to-date coverage.",
                     code_snippet=f'"{pkg}": "{version_spec}"',
                 ))
+            elif max_vuln_parsed and _version_lte(lowest, max_vuln_parsed):
+                if is_exact:
+                    findings.append(Finding(
+                        module="static", rule_id="static.dependency-known-vulnerable", title=f"Known-vulnerable dependency: {pkg}",
+                        description=f"'{pkg}' matches a package with a well-known, high-impact advisory: {advisory}",
+                        severity=Severity.HIGH, confidence=70, location=pkg_path, line=pkg_line,
+                        cwe="CWE-1104",
+                        remediation=f"Upgrade '{pkg}' past the version fixed in the advisory above, or run npm audit for full, up-to-date coverage.",
+                        code_snippet=f'"{pkg}": "{version_spec}"',
+                    ))
+                else:
+                    findings.append(Finding(
+                        module="static", rule_id="static.dependency-known-vulnerable",
+                        title=f"Dependency constraint permits a known-vulnerable version: {pkg}",
+                        description=(
+                            f"'{pkg}''s version constraint ('{version_spec}') permits resolving down to a version "
+                            f"covered by a well-known, high-impact advisory: {advisory} This does not confirm the "
+                            f"version that actually gets installed is vulnerable — only that the constraint does not rule it out."
+                        ),
+                        severity=Severity.HIGH, confidence=35, location=pkg_path, line=pkg_line,
+                        cwe="CWE-1104",
+                        remediation=f"Pin '{pkg}' to a version above the one fixed in the advisory above, or run npm audit for full, up-to-date coverage.",
+                        code_snippet=f'"{pkg}": "{version_spec}"',
+                    ))
+            # else: the lowest version the constraint can resolve to is already past the
+            # advisory's fixed version — genuinely not vulnerable, so nothing is reported.
 
     has_lockfile = any(
         os.path.exists(os.path.join(target_directory, name))
@@ -484,7 +720,7 @@ def _scan_package_json_file(pkg_path: str) -> list[Finding]:
             remediation="Commit a lockfile so every install resolves to the exact same dependency tree.",
         ))
 
-    return findings
+    return _filter_suppressed(findings, lines)
 
 
 def scan_dependencies(target_directory: str) -> list[Finding]:
@@ -542,7 +778,7 @@ def _scan_mcp_config_file(config_path: str) -> list[Finding]:
             ))
 
     try:
-        data = json.loads(content_str)
+        data = json.loads(_strip_suppression_comments_for_json(content_str))
     except json.JSONDecodeError as je:
         findings.append(Finding(
             module="static", rule_id="static.mcp-invalid-json", title="Invalid MCP manifest JSON",
@@ -550,7 +786,7 @@ def _scan_mcp_config_file(config_path: str) -> list[Finding]:
             severity=Severity.LOW, confidence=100, location=config_path, line=getattr(je, "lineno", 1),
             remediation="Fix the JSON syntax of the configuration file.",
         ))
-        return findings
+        return _filter_suppressed(findings, lines)
 
     def check_dict(d: Any) -> None:
         if isinstance(d, dict):
@@ -572,7 +808,7 @@ def _scan_mcp_config_file(config_path: str) -> list[Finding]:
                 check_dict(item)
 
     check_dict(data)
-    return findings
+    return _filter_suppressed(findings, lines)
 
 
 def scan_mcp_config(target_directory: str) -> list[Finding]:
