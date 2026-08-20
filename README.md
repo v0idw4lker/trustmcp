@@ -13,6 +13,12 @@ Total findings across all modules: 12
 
 ---
 
+## ✅ Prerequisites
+
+New to the command line? You'll need three things: [Python 3.10 or newer](https://www.python.org/downloads/) installed on your computer; a terminal open (**Command Prompt** or **PowerShell** on Windows, **Terminal** on Mac); and that terminal pointed at the folder containing the MCP server code you want to scan — use the `cd` command to get there, e.g. `cd path/to/my-mcp-server`.
+
+---
+
 ## ⚡ Quick Installation
 
 ```bash
