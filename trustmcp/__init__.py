@@ -1,5 +1,5 @@
 """
-mcpwarden — security scanner for MCP (Model Context Protocol) servers.
+trustmcp — security scanner for MCP (Model Context Protocol) servers.
 
 Free tier (this package): static (SAST) analysis, live dynamic analysis,
 authentication posture assessment, unified A-F scoring, and CLI/JSON/SARIF

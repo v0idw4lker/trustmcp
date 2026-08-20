@@ -26,7 +26,7 @@ def setup_logging(verbose: bool = False) -> logging.Logger:
         handlers=[RichHandler(console=console, show_path=False, rich_tracebacks=True)],
         force=True,
     )
-    logger = logging.getLogger("mcpwarden")
+    logger = logging.getLogger("trustmcp")
     logger.setLevel(level)
     return logger
 

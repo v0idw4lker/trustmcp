@@ -1,8 +1,8 @@
-"""Tests for mcpwarden.core.static_analyzer against the bundled fixture modules."""
+"""Tests for trustmcp.core.static_analyzer against the bundled fixture modules."""
 
 import os
 
-from mcpwarden.core.static_analyzer import scan_python_file
+from trustmcp.core.static_analyzer import scan_python_file
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 

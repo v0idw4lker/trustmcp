@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mcpwarden"
+name = "trustmcp"
 version = "0.1.0"
 description = "Security scanner for MCP (Model Context Protocol) servers: static (SAST), dynamic (live), and authentication-posture analysis, with an A-F score and SARIF output for the GitHub Security tab."
 readme = "README.md"
@@ -45,14 +45,14 @@ dependencies = [
 dev = ["pytest>=8.0"]
 
 [project.urls]
-Homepage = "https://github.com/v0idw4lker/mcpwarden"
-Repository = "https://github.com/v0idw4lker/mcpwarden"
-Issues = "https://github.com/v0idw4lker/mcpwarden/issues"
+Homepage = "https://github.com/v0idw4lker/trustmcp"
+Repository = "https://github.com/v0idw4lker/trustmcp"
+Issues = "https://github.com/v0idw4lker/trustmcp/issues"
 
-# Installed, the command is `mcpwarden` — e.g.:
-#   uvx mcpwarden@latest scan --path . --mode both --target "stdio:python3 server.py"
+# Installed, the command is `trustmcp` — e.g.:
+#   uvx trustmcp@latest scan --path . --mode both --target "stdio:python3 server.py"
 [project.scripts]
-mcpwarden = "mcpwarden.cli:main"
+trustmcp = "trustmcp.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["mcpwarden*"]
+include = ["trustmcp*"]

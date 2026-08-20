@@ -26,7 +26,7 @@ def build_report_dict(
     score_report: ScoreReport,
 ) -> dict[str, Any]:
     return {
-        "tool": {"name": "mcpwarden", "version": tool_version},
+        "tool": {"name": "trustmcp", "version": tool_version},
         "target_directory": target_directory,
         "targets_scanned": targets_scanned,
         "files_scanned": files_scanned,
