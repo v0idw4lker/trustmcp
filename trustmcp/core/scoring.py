@@ -53,9 +53,13 @@ OWASP_CATEGORY_MAP: dict[str, str] = {
     "static.secret-google-key": "MCP01:2025 Token Mismanagement & Secret Exposure",
     "static.secret-slack-token": "MCP01:2025 Token Mismanagement & Secret Exposure",
     "static.secret-pem-private-key": "MCP01:2025 Token Mismanagement & Secret Exposure",
+    "static.secret-jwt": "MCP01:2025 Token Mismanagement & Secret Exposure",
+    "static.secret-generic-credential": "MCP01:2025 Token Mismanagement & Secret Exposure",
     "static.mcp-hardcoded-secret": "MCP01:2025 Token Mismanagement & Secret Exposure",
     # Static — tool poisoning / hidden content
     "static.hidden-unicode": "MCP03:2025 Tool Poisoning",
+    "static.tool-description-injection": "MCP03:2025 Tool Poisoning",
+    "static.description-mutation": "MCP03:2025 Tool Poisoning",
     # Static — command injection / execution
     "static.dangerous-eval-exec": "MCP05:2025 Command Injection & Execution",
     "static.os-system": "MCP05:2025 Command Injection & Execution",

@@ -24,8 +24,10 @@ from __future__ import annotations
 import ast
 import json
 import logging
+import math
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -167,7 +169,96 @@ SECRET_PATTERNS: dict[str, dict[str, Any]] = {
         "description": "A PEM private key block is embedded directly in code or the repository.",
         "remediation": "Remove the key from the repository, revoke it if it has ever been pushed publicly, and load it from secret storage.",
     },
+    "static.secret-jwt": {
+        "title": "Exposed JWT (JSON Web Token)",
+        "pattern": re.compile(r"eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),
+        "severity": Severity.HIGH, "cwe": "CWE-798", "confidence": 80,
+        "description": "A hardcoded JSON Web Token (JWT) was found in source code. A leaked JWT can be replayed to impersonate whatever principal/claims it carries until it expires.",
+        "remediation": "Move tokens to environment variables or a secret store; never hardcode a bearer token in source.",
+    },
 }
+
+# --- Generic prefixed-credential heuristic (Rule 2, part 2) -----------------
+#
+# Vendor-specific patterns above (OpenAI, AWS, Stripe, ...) match an exact,
+# known format, so a hit is close to a confirmed positive. This one instead
+# matches a *shape* many custom/internal API keys follow ("epro_api_...",
+# "cbx_api_...") and is inherently much weaker evidence: plenty of non-secret
+# identifiers could coincidentally fit it. Shannon entropy on the random-
+# looking suffix is used to reject obviously-fake placeholders (e.g. a
+# fixture's "aa_api_0000000000000000") before they ever become a finding —
+# a real secret's suffix looks close to random, a placeholder's usually
+# doesn't.
+_GENERIC_CREDENTIAL_RE = re.compile(r"\b[a-z]{2,6}_(?:api|key|token|sk)_([A-Za-z0-9]{16,})\b")
+_GENERIC_CREDENTIAL_ENTROPY_THRESHOLD = 3.0  # bits/char; an all-same-char or all-digit run of 16+ chars sits well below this
+
+
+def _shannon_entropy(s: str) -> float:
+    if not s:
+        return 0.0
+    length = len(s)
+    counts = Counter(s)
+    return -sum((n / length) * math.log2(n / length) for n in counts.values())
+
+
+# --- Tool/resource/prompt description injection (Rule 1) --------------------
+#
+# Deliberately scoped to the two places an MCP client actually reads and
+# trusts as a tool/resource/prompt's description — a decorated function's
+# docstring and a `description=` kwarg on the decorator itself — NOT
+# arbitrary text anywhere in a file. A whole-file text scan for phrases like
+# "hidden instructions" or "ignore previous instructions" self-triggers on
+# this project's own README and on core/plugins.py / core/dynamic_client.py,
+# which legitimately discuss those exact phrases in prose to explain what
+# this vulnerability class is.
+_MCP_DECORATOR_ATTRS = ("tool", "resource", "prompt")
+
+_PSEUDO_TAG_RE = re.compile(
+    r"<\s*(?:IMPORTANT|HIDDEN|SYSTEM|SECRET|INSTRUCTIONS)\s*>|\[\s*SYSTEM\s*\]",
+    re.IGNORECASE,
+)
+_CONCEALMENT_RE = re.compile(
+    r"do\s+not\s+(?:tell|mention|inform|disclose)"
+    r"|without\s+(?:informing|telling)"
+    r"|ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions"
+    r"|disregard\s+the\s+above",
+    re.IGNORECASE,
+)
+# Anchored to the START of a line (leading whitespace tolerated) so that
+# "Returns System: operational status" — the word appearing mid-sentence,
+# not as a role label — correctly does NOT match.
+_ROLE_INJECTION_RE = re.compile(r"^[ \t]*(?:system|assistant|ai)\s*:", re.IGNORECASE | re.MULTILINE)
+
+
+def _is_mcp_decorator(decorator: ast.expr) -> bool:
+    """True for `@x.tool(...)` / `@x.resource(...)` / `@x.prompt(...)` for ANY object x —
+    matched structurally on decorator.func.attr, not on a specific base name like "mcp",
+    since real servers name the object mcp/server/app/etc. interchangeably."""
+    return (
+        isinstance(decorator, ast.Call)
+        and isinstance(decorator.func, ast.Attribute)
+        and decorator.func.attr in _MCP_DECORATOR_ATTRS
+    )
+
+
+def _decorator_description_text(decorator: ast.Call) -> Optional[str]:
+    """
+    Extracts the text of a `description=` keyword argument on a decorator
+    call, if present. An f-string (ast.JoinedStr) has its literal
+    (ast.Constant) segments extracted and joined — interpolated variables
+    cannot be resolved statically and are not a bug to work around, just an
+    acknowledged boundary of static analysis.
+    """
+    for kw in decorator.keywords:
+        if kw.arg != "description":
+            continue
+        value = kw.value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            return value.value
+        if isinstance(value, ast.JoinedStr):
+            parts = [v.value for v in value.values if isinstance(v, ast.Constant) and isinstance(v.value, str)]
+            return " ".join(parts) if parts else None
+    return None
 
 
 class SecurityASTVisitor(ast.NodeVisitor):
@@ -184,6 +275,9 @@ class SecurityASTVisitor(ast.NodeVisitor):
         # Stack of parameter-name sets, one per function scope currently
         # entered. Global scope = empty set.
         self.scope_stack: list[set[str]] = [set()]
+        # Stack of enclosing `if` test expressions, used only by the
+        # description-mutation rule's call-counter confidence bonus.
+        self.if_test_stack: list[ast.expr] = []
 
     def _params_in_scope(self) -> set[str]:
         params: set[str] = set()
@@ -202,6 +296,7 @@ class SecurityASTVisitor(ast.NodeVisitor):
         return names
 
     def _visit_function(self, node) -> None:
+        self._check_mcp_description_injection(node)
         self.scope_stack.append(self._collect_param_names(node))
         self.generic_visit(node)
         self.scope_stack.pop()
@@ -212,6 +307,20 @@ class SecurityASTVisitor(ast.NodeVisitor):
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self._visit_function(node)
 
+    def visit_If(self, node: ast.If) -> None:
+        self.if_test_stack.append(node.test)
+        self.generic_visit(node)
+        self.if_test_stack.pop()
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        for target in node.targets:
+            self._check_description_mutation(node, target)
+        self.generic_visit(node)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        self._check_description_mutation(node, node.target)
+        self.generic_visit(node)
+
     def _add(self, node: ast.AST, rule_id: str, title: str, description: str,
               severity: Severity, cwe: str, confidence: int, remediation: str, snippet: str) -> None:
         self.findings.append(Finding(
@@ -219,6 +328,121 @@ class SecurityASTVisitor(ast.NodeVisitor):
             severity=severity, confidence=confidence, location=self.filepath,
             line=getattr(node, "lineno", 1), cwe=cwe, remediation=remediation, code_snippet=snippet,
         ))
+
+    def _check_mcp_description_injection(self, node) -> None:
+        """Rule 1: scans ONLY a decorated tool/resource/prompt function's docstring
+        and its decorator's `description=` kwarg — see the module-level comment
+        above _MCP_DECORATOR_ATTRS for why this is deliberately not a whole-file scan."""
+        mcp_decorators = [d for d in node.decorator_list if _is_mcp_decorator(d)]
+        if not mcp_decorators:
+            return
+
+        texts: list[tuple[str, str]] = []
+        docstring = ast.get_docstring(node)
+        if docstring:
+            texts.append(("docstring", docstring))
+        for decorator in mcp_decorators:
+            desc_text = _decorator_description_text(decorator)
+            if desc_text:
+                texts.append(("description= argument", desc_text))
+        if not texts:
+            return
+
+        pseudo_tag_hit: Optional[tuple[str, str]] = None
+        concealment_hit: Optional[tuple[str, str]] = None
+        role_injection_hit: Optional[tuple[str, str]] = None
+        for label, text in texts:
+            if pseudo_tag_hit is None:
+                m = _PSEUDO_TAG_RE.search(text)
+                if m:
+                    pseudo_tag_hit = (label, m.group(0))
+            if concealment_hit is None:
+                m = _CONCEALMENT_RE.search(text)
+                if m:
+                    concealment_hit = (label, m.group(0))
+            if role_injection_hit is None:
+                m = _ROLE_INJECTION_RE.search(text)
+                if m:
+                    role_injection_hit = (label, m.group(0).strip())
+
+        if not (pseudo_tag_hit or concealment_hit or role_injection_hit):
+            return
+
+        evidence_bits = []
+        if pseudo_tag_hit:
+            evidence_bits.append(f"pseudo-instruction tag {pseudo_tag_hit[1]!r} in its {pseudo_tag_hit[0]}")
+        if concealment_hit:
+            evidence_bits.append(f"concealment phrase {concealment_hit[1]!r} in its {concealment_hit[0]}")
+        if role_injection_hit:
+            evidence_bits.append(f"role-spoofing line {role_injection_hit[1]!r} in its {role_injection_hit[0]}")
+
+        # Either a pseudo-tag or a concealment directive alone is a strong,
+        # deliberate-looking signal (HIGH); a bare role-spoofing line with
+        # neither is weaker on its own (MEDIUM).
+        if pseudo_tag_hit or concealment_hit:
+            severity, confidence = Severity.HIGH, 75
+        else:
+            severity, confidence = Severity.MEDIUM, 55
+
+        snippet_source = pseudo_tag_hit or concealment_hit or role_injection_hit
+        snippet = snippet_source[1] if snippet_source else ""
+
+        self._add(
+            node, "static.tool-description-injection",
+            "Possible instruction injection in a tool/resource/prompt description",
+            f"The description exposed to the connecting agent for '{node.name}' contains " + "; ".join(evidence_bits) +
+            ". MCP tool/resource/prompt descriptions are read and trusted by the calling LLM, not just shown to a human — "
+            "hidden or role-spoofing instructions embedded there can hijack the agent's behavior without a human ever "
+            "reviewing the raw description text (tool poisoning).",
+            severity, "N/A (LLM prompt-injection heuristic)", confidence,
+            "Remove pseudo-instruction tags, concealment language, and role-spoofing lines from tool/resource/prompt "
+            "descriptions. A description should plainly state behavior for the calling agent, never attempt to covertly "
+            "direct it.",
+            snippet,
+        )
+
+    def _has_call_counter_guard(self) -> bool:
+        """
+        True if any currently-enclosing `if` test looks like a call-counter
+        comparison (`some_name < / <= / > / >= / == <int literal>`) — the
+        exact DVMCP rug-pull shape (`if call_count < 3: ...`). This only
+        raises confidence on an already-firing description-mutation finding;
+        its absence never suppresses the finding.
+        """
+        for test in self.if_test_stack:
+            if not (isinstance(test, ast.Compare) and len(test.ops) == 1
+                    and isinstance(test.ops[0], (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq))):
+                continue
+            left, right = test.left, test.comparators[0]
+            if isinstance(left, ast.Name) and isinstance(right, ast.Constant) and isinstance(right.value, int):
+                return True
+            if isinstance(right, ast.Name) and isinstance(left, ast.Constant) and isinstance(left.value, int):
+                return True
+        return False
+
+    def _check_description_mutation(self, node: ast.AST, target: ast.expr) -> None:
+        """Rule 3: flags any Assign/AugAssign whose target is `<something>.__doc__` or
+        `<something>.description` — a real reassignment statement, never the docstring
+        itself (a docstring is an Expr(Constant), not an Assign)."""
+        if not (isinstance(target, ast.Attribute) and target.attr in ("__doc__", "description")):
+            return
+        confidence = 85 if self._has_call_counter_guard() else 65
+        snippet = f"{ast.unparse(target)} = ..."
+        self._add(
+            node, "static.description-mutation",
+            "Runtime mutation of a tool/resource's description or docstring",
+            f"'{ast.unparse(target)}' is reassigned at runtime, after the containing function/class is already defined. "
+            "A tool or resource that changes its own description/docstring after deployment (e.g. after N successful "
+            "calls) can pass a one-time review cleanly and then present different instructions to the agent later — "
+            "a 'rug pull'." + (
+                " The reassignment is guarded by what looks like a call-counter comparison, matching that exact pattern."
+                if confidence == 85 else ""
+            ),
+            Severity.HIGH, "N/A (runtime-mutation heuristic)", confidence,
+            "Treat tool/resource/prompt descriptions and docstrings as immutable interface contracts: reviewed once, "
+            "never reassigned by the running server.",
+            snippet,
+        )
 
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
@@ -377,6 +601,23 @@ def scan_python_file(file_path: str) -> list[Finding]:
                         severity=meta["severity"], confidence=meta["confidence"], location=file_path,
                         line=line_num, cwe=meta["cwe"], remediation=meta["remediation"], code_snippet=line.strip(),
                     ))
+            for match in _GENERIC_CREDENTIAL_RE.finditer(line):
+                if _shannon_entropy(match.group(1)) < _GENERIC_CREDENTIAL_ENTROPY_THRESHOLD:
+                    continue
+                findings.append(Finding(
+                    module="static", rule_id="static.secret-generic-credential",
+                    title="Possible hardcoded credential (generic prefixed pattern)",
+                    description=(
+                        "A string matching a generic '<prefix>_api/key/token/sk_<random>' credential shape was found. "
+                        "This is a heuristic shape match, not a vendor-specific signature like the OpenAI/AWS/Stripe/etc. "
+                        "checks above, so it carries lower confidence and may occasionally match a non-secret identifier "
+                        "that happens to follow this naming convention."
+                    ),
+                    severity=Severity.MEDIUM, confidence=45, location=file_path, line=line_num,
+                    cwe="CWE-798",
+                    remediation="If this is a real credential, move it to an environment variable or a secret store. If it is not a credential, consider a naming convention that doesn't resemble one.",
+                    code_snippet=line.strip(),
+                ))
             hidden = find_hidden_unicode(line)
             if hidden:
                 findings.append(Finding(
