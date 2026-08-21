@@ -12,4 +12,4 @@ premium module registers against, so the free-tier pipeline can pick them
 up automatically if one is installed locally.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"

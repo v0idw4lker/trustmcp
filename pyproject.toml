@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trustmcp"
-version = "0.1.1"
+version = "0.1.2"
 description = "Security scanner for MCP (Model Context Protocol) servers: static (SAST), dynamic (live), and authentication-posture analysis, with an A-F score and SARIF output for the GitHub Security tab."
 readme = "README.md"
 requires-python = ">=3.10"
