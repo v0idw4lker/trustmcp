@@ -32,6 +32,8 @@ premium/
 *.sarif
 mcp-scan-report.json
 mcp-scan-report.sarif
+mcp-check-report.json
+mcp-check-report.sarif
 *.report.json
 *.report.html
 

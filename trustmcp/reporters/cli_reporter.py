@@ -115,6 +115,31 @@ def print_remediations(console: Console, remediations: list[dict[str, str]]) -> 
         console.print(f"  {i}. [{style}][{rec['severity']}][/{style}] {rec['text']}")
 
 
+def print_verdict(console: Console, verdict: str) -> None:
+    style = "bold red" if "Do not install" in verdict else "bold green"
+    console.print(Panel.fit(f"[{style}]{verdict}[/{style}]", title="Install Verdict", border_style=style.split()[-1]))
+
+
+def print_preinstall_metadata(console: Console, metadata: Any) -> None:
+    """Prints the pre-install registry signals (`trustmcp check`) — informational, not part of the score."""
+    table = Table(title="Pre-Install Signals")
+    table.add_column("Signal")
+    table.add_column("Value")
+    table.add_row("Ecosystem", metadata.ecosystem)
+    table.add_row("Package", metadata.package_name)
+    table.add_row("Resolved version", str(metadata.resolved_version))
+    table.add_row("Repository", metadata.repository_url or "[dim]not declared[/dim]")
+    table.add_row("First release", metadata.created or "[dim]unknown[/dim]")
+    table.add_row("Last publish", metadata.last_publish or "[dim]unknown[/dim]")
+    if metadata.ecosystem == "npm":
+        table.add_row("Maintainers", str(metadata.maintainers_count) if metadata.maintainers_count is not None else "[dim]unknown[/dim]")
+    elif metadata.ecosystem == "pypi":
+        table.add_row("Maintainers", "[dim]unavailable — PyPI's JSON API does not expose this (known gap)[/dim]")
+    if metadata.install_scripts:
+        table.add_row("npm lifecycle scripts", ", ".join(sorted(metadata.install_scripts)))
+    console.print(table)
+
+
 def print_premium_upsell(console: Console, unregistered: Sequence[Any]) -> None:
     if not unregistered:
         return

@@ -5,11 +5,19 @@ Usage:
     trustmcp scan --path ./my-mcp-server --mode both \\
         --target "stdio:python3 server.py" --target "url:http://127.0.0.1:8931/mcp"
 
+    trustmcp check npm:@modelcontextprotocol/server-filesystem
+
 Modes:
     static   Source-code analysis only (no running server required).
     dynamic  Live analysis only (requires at least one --target).
     both     Runs static, dynamic (if targets are given), and auth-posture
              analysis, then produces a single unified score/report (default).
+
+Commands:
+    scan     Analyze an MCP server you already have on disk (and/or running).
+    check    Resolve a registry reference (npm/PyPI/GitHub/server.json) and
+             scan it BEFORE installing — downloads and reads only, never runs
+             install scripts or executes anything from the package.
 """
 
 from __future__ import annotations
@@ -26,6 +34,7 @@ from .core import plugins
 from .core.auth_posture import analyze_auth_posture
 from .core.dynamic_client import DynamicScanResult, scan_http_target, scan_stdio_target
 from .core.models import Finding, Severity
+from .core.preinstall import build_verdict, run_preinstall_scan
 from .core.scoring import calculate_score_report
 from .core.static_analyzer import CONFIDENCE_DISCLAIMER, scan_directory
 from .reporters import cli_reporter, json_reporter, sarif_reporter
@@ -198,6 +207,73 @@ def _run_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_check(args: argparse.Namespace) -> int:
+    setup_logging(verbose=args.verbose)
+    console.rule("[bold blue]trustmcp check — Pre-Install MCP Server Scan[/bold blue]")
+    console.print(f"Resolving reference: [bold]{args.reference}[/bold]")
+
+    max_size_bytes = int(args.max_size * 1024 * 1024)
+    result = run_preinstall_scan(args.reference, timeout=args.timeout, max_size_bytes=max_size_bytes, offline=args.offline)
+
+    console.print(
+        f"[green]✔ Resolved {result.metadata.ecosystem}:{result.metadata.package_name} "
+        f"@ {result.metadata.resolved_version}[/green]"
+    )
+    console.print("Downloaded and extracted into an isolated temp directory; nothing from the package was executed.")
+    cli_reporter.print_preinstall_metadata(console, result.metadata)
+
+    console.rule("[bold blue]Static + auth-posture analysis (extracted source)[/bold blue]")
+    console.print(f"Scanned {result.files_scanned} Python file(s) from the downloaded package.")
+
+    console.rule("[bold blue]Score[/bold blue]")
+    score_report = calculate_score_report(result.findings)
+    remediations = cli_reporter.build_remediations(result.findings)
+    verdict = build_verdict(score_report)
+    cli_reporter.print_verdict(console, verdict)
+    cli_reporter.print_full_report(console, score_report, remediations, plugins.unregistered_known_modules())
+
+    try:
+        if not args.no_json:
+            report_dict = json_reporter.build_report_dict(
+                tool_version=__version__,
+                target_directory=args.reference,
+                targets_scanned=[f"{result.metadata.ecosystem}:{result.metadata.package_name}@{result.metadata.resolved_version}"],
+                files_scanned=result.files_scanned,
+                confidence_disclaimer=CONFIDENCE_DISCLAIMER,
+                score_report=score_report,
+            )
+            report_dict["verdict"] = verdict
+            report_dict["preinstall"] = {
+                "reference": result.reference,
+                "ecosystem": result.metadata.ecosystem,
+                "package_name": result.metadata.package_name,
+                "resolved_version": result.metadata.resolved_version,
+                "download_url": result.metadata.download_url,
+                "repository_url": result.metadata.repository_url,
+                "created": result.metadata.created,
+                "last_publish": result.metadata.last_publish,
+                "maintainers_count": result.metadata.maintainers_count,
+            }
+            json_reporter.write_json_report(args.json_output, report_dict)
+            console.print(f"\n[bold green]✔ JSON report written: {args.json_output}[/bold green]")
+
+        if not args.no_sarif:
+            sarif_log = sarif_reporter.build_sarif(result.findings, tool_version=__version__)
+            sarif_reporter.write_sarif(args.sarif_output, sarif_log)
+            console.print(f"[bold green]✔ SARIF report written: {args.sarif_output}[/bold green]")
+    except ScannerError as e:
+        console.print(f"[bold red]{e}[/bold red]")
+        return 1
+
+    if _fail_on_exceeded(result.findings, args.fail_on):
+        console.print(
+            f"\n[bold red]✖ Exiting non-zero: a finding at or above severity '{args.fail_on}' was found (--fail-on).[/bold red]"
+        )
+        return 1
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="trustmcp", description="Security scanner for MCP (Model Context Protocol) servers.")
     parser.add_argument("--version", action="version", version=f"trustmcp {__version__}")
@@ -234,6 +310,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan_parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging.")
 
+    check_parser = subparsers.add_parser(
+        "check",
+        help="Scan an MCP server BEFORE installing it, resolved directly from a registry reference.",
+    )
+    check_parser.add_argument(
+        "reference", type=str,
+        help="'npm:<package>[@version]', 'pypi:<package>[==version]', 'github:<owner>/<repo>[@ref]', or a server.json URL.",
+    )
+    check_parser.add_argument("--offline", action="store_true", help="Refuse any network access; fail clearly instead of hanging.")
+    check_parser.add_argument(
+        "--timeout", type=float, default=30.0,
+        help="Network timeout in seconds for registry lookups and the download (default: 30).",
+    )
+    check_parser.add_argument(
+        "--max-size", type=float, default=50.0,
+        help="Maximum download size in MB; aborts if exceeded (default: 50).",
+    )
+    check_parser.add_argument(
+        "--json-output", type=str, default="mcp-check-report.json",
+        help="Output path for the JSON report (default: mcp-check-report.json).",
+    )
+    check_parser.add_argument("--no-json", action="store_true", help="Do not write a JSON report.")
+    check_parser.add_argument(
+        "--sarif-output", type=str, default="mcp-check-report.sarif",
+        help="Output path for the SARIF report (default: mcp-check-report.sarif).",
+    )
+    check_parser.add_argument("--no-sarif", action="store_true", help="Do not write a SARIF report.")
+    check_parser.add_argument(
+        "--fail-on", choices=SEVERITY_THRESHOLDS, default="none",
+        help="Exit with a non-zero status if a finding at or above this severity is present (for CI/CD gating). Default: none.",
+    )
+    check_parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging.")
+
     return parser
 
 
@@ -241,9 +350,10 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.command == "scan":
+    if args.command in ("scan", "check"):
+        runner = _run_scan if args.command == "scan" else _run_check
         try:
-            exit_code = _run_scan(args)
+            exit_code = runner(args)
         except ScannerError as e:
             console.print(f"[bold red]Error: {e}[/bold red]")
             sys.exit(1)

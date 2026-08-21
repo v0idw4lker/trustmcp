@@ -20,3 +20,15 @@ class InvalidTargetError(ScannerError):
 
 class ReportWriteError(ScannerError):
     """Raised when a report file cannot be written to disk."""
+
+
+class OfflineModeError(ScannerError):
+    """Raised when --offline is set and an operation would require network access."""
+
+
+class RegistryResolutionError(ScannerError):
+    """Raised when a `check` reference cannot be resolved to a downloadable package (bad reference, 404, malformed manifest, ...)."""
+
+
+class DownloadError(ScannerError):
+    """Raised when downloading or safely extracting a package tarball fails (timeout, too large, path traversal, ...)."""

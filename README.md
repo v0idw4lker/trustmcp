@@ -59,6 +59,48 @@ Outputs: a color-coded console report (via `rich`), `mcp-scan-report.json`, and 
 | `--fail-on`       | Exit non-zero if a finding at/above this severity exists — `low`/`medium`/`high`/`critical` (CI gating) |
 | `-v`, `--verbose` | Verbose logging                                                                        |
 
+### `trustmcp check` — scan a server BEFORE you install it
+
+`scan` analyzes a server you already have on disk. `check` resolves a registry reference
+directly — npm, PyPI, GitHub, or an official MCP registry `server.json` — downloads the
+source into an isolated temp directory, and scans it **before it ever touches
+`npm install` / `pip install`**. Nothing from the package is ever executed: no install
+scripts, no import, no build step — download, extract, and read only.
+
+```bash
+# npm (scoped names are handled automatically)
+trustmcp check npm:@modelcontextprotocol/server-everything
+
+# PyPI, pinned to a specific version
+trustmcp check pypi:some-mcp-server==0.3.0
+
+# GitHub, default branch resolved automatically
+trustmcp check github:owner/repo
+
+# An official MCP registry server.json record
+trustmcp check https://registry.modelcontextprotocol.io/v0/servers/some-server/server.json
+```
+
+On top of the same static + auth-posture analysis `scan` runs, `check` adds signals that
+only make sense pre-install: package age and days since last publish, maintainer count
+(npm; PyPI does not expose this — reported as a known gap, never faked), whether the
+manifest's repository URL actually resolves, and whether `package.json` declares a
+`preinstall`/`postinstall`/`install` script — code that runs automatically on
+`npm install`, the classic supply-chain attack vector. The report leads with a one-line
+install verdict, e.g. `Grade D. Do not install without reviewing tools/exec.py:44 first.`
+
+| Flag              | What it does                                                                          |
+| ----------------- | -------------------------------------------------------------------------------------- |
+| `--offline`       | Refuse any network access; fail clearly instead of hanging                             |
+| `--timeout`       | Network timeout in seconds for registry lookups and the download (default `30`)        |
+| `--max-size`      | Maximum download size in MB; aborts if exceeded (default `50`)                         |
+| `--json-output`   | Path for the JSON report (default `mcp-check-report.json`)                             |
+| `--no-json`       | Do not write a JSON report                                                             |
+| `--sarif-output`  | Path for the SARIF report (default `mcp-check-report.sarif`)                           |
+| `--no-sarif`      | Do not write a SARIF report                                                            |
+| `--fail-on`       | Exit non-zero if a finding at/above this severity exists — `low`/`medium`/`high`/`critical` (CI gating) |
+| `-v`, `--verbose` | Verbose logging                                                                        |
+
 ---
 
 ## 🎯 What It Detects
@@ -236,6 +278,9 @@ trustmcp/
 │   │   ├── static_analyzer.py  # AST/regex SAST, secrets, dependency auditing
 │   │   ├── dynamic_client.py   # live MCP client — stdio/HTTP, enumeration, TLS/auth, fuzzing
 │   │   ├── auth_posture.py     # OAuth 2.1 / static key / env-var token detection
+│   │   ├── registry_resolver.py # `check`: npm/PyPI/GitHub/server.json -> a downloadable tarball URL
+│   │   ├── supply_chain.py     # `check`: pre-install-only signals (age, maintainers, install scripts, repo resolution)
+│   │   ├── preinstall.py       # `check`: isolated download/extract + orchestrates static + auth-posture + supply-chain
 │   │   ├── scoring.py          # A-F scoring engine + OWASP MCP Top 10 mapping
 │   │   └── plugins.py          # extension point for premium modules (unused in the free tier)
 │   ├── reporters/
