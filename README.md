@@ -1,5 +1,10 @@
 # trustmcp
 
+[![PyPI version](https://img.shields.io/pypi/v/trustmcp)](https://pypi.org/project/trustmcp/)
+[![Python versions](https://img.shields.io/pypi/pyversions/trustmcp)](https://pypi.org/project/trustmcp/)
+[![License](https://img.shields.io/pypi/l/trustmcp)](https://pypi.org/project/trustmcp/)
+[![CI status](https://github.com/v0idw4lker/trustmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/v0idw4lker/trustmcp/actions/workflows/ci.yml)
+
 **Security scanner for MCP (Model Context Protocol) servers** — the protocol through which AI agents (Claude, ChatGPT, Cursor, etc.) connect to external tools.
 
 Given an MCP server (source code, a running server, or both), `trustmcp` produces a vulnerability report and an **A–F** score, natively integrated into the **GitHub Security tab** via SARIF.
