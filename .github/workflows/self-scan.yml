@@ -1,0 +1,41 @@
+name: Self-scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  self-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install trustmcp
+        run: pip install -e .
+
+      # --fail-on defaults to none, so this step won't actually fail today —
+      # continue-on-error is kept anyway so a future --fail-on change here
+      # can never block the SARIF upload below.
+      - name: Scan fixtures/
+        continue-on-error: true
+        run: >
+          trustmcp scan --path fixtures --mode static
+          --sarif-output trustmcp-self-scan.sarif --no-json
+
+      - name: Upload SARIF to the Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trustmcp-self-scan.sarif

@@ -1,0 +1,61 @@
+name: "trustmcp scan"
+description: "Scan an MCP server for security issues and upload the results as SARIF to the GitHub Security tab."
+author: "v0idw4lker"
+branding:
+  icon: "shield"
+  color: "purple"
+
+inputs:
+  path:
+    description: "Directory to scan."
+    required: false
+    default: "."
+  mode:
+    description: "Scan mode: static, dynamic, or both."
+    required: false
+    default: "static"
+  fail-on:
+    description: "Minimum severity that fails the job: none, low, medium, high, or critical."
+    required: false
+    default: "high"
+  sarif-output:
+    description: "Path to write the SARIF report to."
+    required: false
+    default: "trustmcp.sarif"
+
+# Composite actions cannot declare a `permissions:` block — that is set
+# entirely by the caller's own workflow. See examples/github-actions.md:
+# callers MUST grant `security-events: write` themselves or the upload-sarif
+# step below fails silently.
+runs:
+  using: "composite"
+  steps:
+    - name: Install trustmcp
+      shell: bash
+      run: pip install trustmcp
+
+    - name: Scan
+      shell: bash
+      run: |
+        trustmcp scan \
+          --path "${{ inputs.path }}" \
+          --mode "${{ inputs.mode }}" \
+          --sarif-output "${{ inputs.sarif-output }}" \
+          --no-json \
+          --fail-on "${{ inputs.fail-on }}" \
+          || echo "SCAN_FAILED=1" >> "$GITHUB_ENV"
+
+    - name: Upload SARIF to the Security tab
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-output }}
+
+    - name: Fail the job if the scan found issues at or above the threshold
+      if: always()
+      shell: bash
+      run: |
+        if [ "$SCAN_FAILED" = "1" ]; then
+          echo "trustmcp scan found issues at or above the '${{ inputs.fail-on }}' threshold." >&2
+          exit 1
+        fi
