@@ -54,6 +54,10 @@ def test_requirements_range_permitting_vulnerable_version_fires_honestly(tmp_pat
     # Weaker claim than a confirmed hit -> lower confidence than the old
     # unconditional 75, and the exact-pin case below.
     assert hits[0].confidence < 75
+    # No exact pin proves the resolved version is actually vulnerable (pip
+    # resolves to the newest version a constraint permits), so this must not
+    # carry the same severity as a confirmed hit.
+    assert hits[0].severity.value == "LOW"
 
 
 def test_requirements_exact_vulnerable_pin_still_fires_at_full_confidence(tmp_path):
@@ -87,6 +91,20 @@ def test_package_json_exact_vulnerable_pin_fires_confirmed(tmp_path):
     hits = [f for f in findings if f.rule_id == "static.dependency-known-vulnerable"]
     assert len(hits) == 1
     assert hits[0].confidence == 70
+    assert hits[0].severity.value == "HIGH"
+
+
+def test_package_json_range_permitting_vulnerable_version_fires_low(tmp_path):
+    # Same idiom as the pip case: "^"/">=" only establishes a lower bound,
+    # npm resolves to the newest version the range permits, so this must not
+    # carry the same severity as a confirmed (exact-pin) hit.
+    path = _write(tmp_path, "package.json", '{"dependencies": {"minimist": ">=1.0.0"}}')
+    findings = _scan_package_json_file(path)
+    hits = [f for f in findings if f.rule_id == "static.dependency-known-vulnerable"]
+    assert len(hits) == 1
+    assert "permit" in hits[0].description.lower()
+    assert hits[0].severity.value == "LOW"
+    assert hits[0].confidence < 70
 
 
 # --- FIX 2: dependency-weak-constraint must not contradict its own snippet --

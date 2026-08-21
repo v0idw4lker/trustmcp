@@ -610,7 +610,7 @@ def _scan_requirements_txt_file(req_path: str) -> list[Finding]:
                                 f"well-known, high-impact advisory: {advisory} This does not confirm the version "
                                 f"that actually gets installed is vulnerable — only that the constraint does not rule it out."
                             ),
-                            severity=Severity.HIGH, confidence=40, location=req_path, line=line_num,
+                            severity=Severity.LOW, confidence=40, location=req_path, line=line_num,
                             cwe="CWE-1104",
                             remediation=f"Pin '{pkg}' to a version above the one fixed in the advisory above (==, or a lower bound past it), or run pip-audit for full, up-to-date coverage.",
                             code_snippet=line,
@@ -700,7 +700,7 @@ def _scan_package_json_file(pkg_path: str) -> list[Finding]:
                             f"covered by a well-known, high-impact advisory: {advisory} This does not confirm the "
                             f"version that actually gets installed is vulnerable — only that the constraint does not rule it out."
                         ),
-                        severity=Severity.HIGH, confidence=35, location=pkg_path, line=pkg_line,
+                        severity=Severity.LOW, confidence=35, location=pkg_path, line=pkg_line,
                         cwe="CWE-1104",
                         remediation=f"Pin '{pkg}' to a version above the one fixed in the advisory above, or run npm audit for full, up-to-date coverage.",
                         code_snippet=f'"{pkg}": "{version_spec}"',

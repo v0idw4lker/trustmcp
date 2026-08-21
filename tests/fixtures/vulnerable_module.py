@@ -7,7 +7,7 @@ OPENAI_API_KEY = "sk-abcdefghijklmnopqrstuvwxyz123456789012"
 ANTHROPIC_API_KEY = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"
 GITHUB_TOKEN = "ghp_1234567890abcdefghijklmnopqrstuvwxyzABCD"
 AWS_ACCESS_KEY = "AKIAABCDEFGHIJKLMNOP"
-STRIPE_KEY = "sk_test_" + "0" * 24  # deliberately fake, for scanner testing only
+STRIPE_KEY = "sk_test_000000000000000000000000"  # deliberately fake, for scanner testing only
 GOOGLE_API_KEY = "AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456"
 SLACK_TOKEN = "xoxb-1234567890-abcdefghij"
 
