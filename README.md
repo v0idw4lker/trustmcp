@@ -202,7 +202,7 @@ The free tier's `trustmcp/core/plugins.py` defines the extension point these cap
 ```bash
 git clone https://github.com/v0idw4lker/trustmcp
 cd trustmcp
-pip install -r requirements.txt
+pip install -e ".[dev]"
 
 # Static scan on this repo itself (fixtures/ is intentionally vulnerable)
 trustmcp scan --path . --mode static
@@ -219,7 +219,6 @@ trustmcp scan --path . --mode both \
 ### Running the test suite
 
 ```bash
-pip install -e ".[dev]"
 pytest
 ```
 
@@ -228,6 +227,7 @@ pytest
 ## 🗺️ Roadmap
 
 - [x] Published detection-rate + false-positive-rate validation against known-vulnerable and clean MCP server benchmarks — see [Validation](#-validation-dvmcp-benchmark) (2026-08-19, re-run 2026-08-21)
+- [x] Pre-install scanning of registry references (`trustmcp check`) — npm, PyPI, GitHub, and official registry server.json
 - [ ] Complete OAuth 2.1 flow for authenticated dynamic scanning
 - [ ] Semantic analysis, cross-server toxic-flow, and continuous monitoring (paid tier)
 - [ ] Listing on `awesome-mcp-security` and official MCP registries
