@@ -11,10 +11,7 @@ Given an MCP server (source code, a running server, or both), `trustmcp` produce
 
 Interested in the premium tier (semantic analysis, cross-server toxic-flow, continuous monitoring)? Join the waitlist at [trustmcp.netlify.app](https://trustmcp.netlify.app).
 
-```
-Grade: F  Score: 45/100
-Total findings across all modules: 12
-```
+![trustmcp demo](docs/demo.gif)
 
 ---
 
