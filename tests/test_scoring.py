@@ -47,3 +47,15 @@ def test_findings_without_a_mapping_are_left_unmapped():
     report = calculate_score_report(findings)
     assert findings[0].owasp_category is None
     assert report.unmapped_findings == 1
+
+
+def test_repeated_identical_rule_id_score_deduction_is_capped():
+    # 8 identical-rule_id LOW findings (e.g. a dozen ordinary npm ^/~ semver
+    # ranges) is one repeated pattern, not 8 independent failures — only the
+    # first MAX_SCORED_INSTANCES_PER_RULE (5) should subtract from score.
+    findings = [_finding("static.dependency-weak-constraint", Severity.LOW) for _ in range(8)]
+    report = calculate_score_report(findings)
+    assert report.score == 100 - (5 * 3)  # capped at 5 instances, not 8 (-15, not -24)
+    # Nothing is hidden from the full report — only the score deduction is capped.
+    assert report.total_findings == 8
+    assert report.severity_summary["LOW"] == 8

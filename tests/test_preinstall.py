@@ -150,7 +150,7 @@ def test_build_verdict_no_findings():
     from trustmcp.core.scoring import calculate_score_report
 
     report = calculate_score_report([])
-    assert preinstall.build_verdict(report) == "Grade A. No blocking findings."
+    assert preinstall.build_verdict(report, files_scanned=1) == "Grade A. No blocking findings."
 
 
 def test_build_verdict_high_severity_points_at_worst_finding():
@@ -162,6 +162,21 @@ def test_build_verdict_high_severity_points_at_worst_finding():
         severity=Severity.CRITICAL, confidence=95, location="tools/exec.py", line=44,
     )]
     report = calculate_score_report(findings)
-    verdict = preinstall.build_verdict(report)
+    verdict = preinstall.build_verdict(report, files_scanned=1)
     assert verdict.startswith("Grade")
     assert "Do not install without reviewing tools/exec.py:44 first." in verdict
+
+
+def test_build_verdict_zero_files_scanned_adds_honest_caveat():
+    # The scoring-calibration bug this guards against: a non-Python package
+    # (e.g. npm:@modelcontextprotocol/server-everything) scans 0 Python files
+    # yet still produces a confident-looking letter grade from
+    # manifest/supply-chain/auth signals alone. The verdict must say so
+    # plainly instead of implying source code was reviewed.
+    from trustmcp.core.scoring import calculate_score_report
+
+    report = calculate_score_report([])
+    verdict = preinstall.build_verdict(report, files_scanned=0)
+    assert "0 source files were statically analyzed" in verdict
+    assert "Python-only static analysis does not yet cover this package's language" in verdict
+    assert "No blocking findings." in verdict

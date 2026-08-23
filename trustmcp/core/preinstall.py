@@ -205,13 +205,28 @@ def run_preinstall_scan(reference: str, *, timeout: float, max_size_bytes: int, 
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def build_verdict(score_report: ScoreReport) -> str:
-    """One clear line aimed at the install decision, e.g. 'Grade D. Do not install without reviewing tools/exec.py:44 first.'"""
-    if not score_report.findings:
-        return f"Grade {score_report.grade}. No blocking findings."
+def build_verdict(score_report: ScoreReport, files_scanned: int) -> str:
+    """One clear line aimed at the install decision, e.g. 'Grade D. Do not install without reviewing tools/exec.py:44 first.'
 
-    worst = max(score_report.findings, key=lambda f: SEVERITY_RANK.get(f.severity, 0))
-    if SEVERITY_RANK.get(worst.severity, 0) >= SEVERITY_RANK[Severity.HIGH]:
-        location = f"{worst.location}:{worst.line}" if worst.line else worst.location
-        return f"Grade {score_report.grade}. Do not install without reviewing {location} first."
-    return f"Grade {score_report.grade}. No blocking findings, but review the report below before installing."
+    When files_scanned is 0, the grade was computed from dependency-manifest
+    and supply-chain signals alone — static analysis is Python-only, so a
+    non-Python (or non-source) package never gets any actual source code
+    review. Without an explicit caveat, a confident-looking letter grade
+    silently overstates how much was actually checked.
+    """
+    if not score_report.findings:
+        body = "No blocking findings."
+    else:
+        worst = max(score_report.findings, key=lambda f: SEVERITY_RANK.get(f.severity, 0))
+        if SEVERITY_RANK.get(worst.severity, 0) >= SEVERITY_RANK[Severity.HIGH]:
+            location = f"{worst.location}:{worst.line}" if worst.line else worst.location
+            body = f"Do not install without reviewing {location} first."
+        else:
+            body = "No blocking findings, but review the report below before installing."
+
+    if files_scanned == 0:
+        return (
+            f"Grade {score_report.grade} (dependency-manifest & supply-chain signals only — 0 source files "
+            f"were statically analyzed; Python-only static analysis does not yet cover this package's language). {body}"
+        )
+    return f"Grade {score_report.grade}. {body}"

@@ -30,6 +30,7 @@ def build_report_dict(
         "target_directory": target_directory,
         "targets_scanned": targets_scanned,
         "files_scanned": files_scanned,
+        "code_analysis_performed": files_scanned > 0,
         "confidence_disclaimer": confidence_disclaimer,
         "score": score_report.score,
         "grade": score_report.grade,

@@ -132,6 +132,12 @@ def _run_scan(args: argparse.Namespace) -> int:
         files_scanned = static_result.files_scanned
         all_findings.extend(static_result.findings)
         console.print(f"Scanned {files_scanned} Python file(s) under '{args.path}'. {len(static_result.findings)} finding(s).")
+        if files_scanned == 0:
+            console.print(
+                "[yellow]⚠ No source files were statically analyzed (static analysis only supports Python "
+                "today). The score and grade below do not reflect any source code review for this "
+                "target.[/yellow]"
+            )
 
     # --- Dynamic analysis -------------------------------------------------------
     if args.mode in ("dynamic", "both"):
@@ -224,11 +230,17 @@ def _run_check(args: argparse.Namespace) -> int:
 
     console.rule("[bold blue]Static + auth-posture analysis (extracted source)[/bold blue]")
     console.print(f"Scanned {result.files_scanned} Python file(s) from the downloaded package.")
+    if result.files_scanned == 0:
+        console.print(
+            "[yellow]⚠ No source files were statically analyzed (static analysis only supports Python "
+            "today). The score and grade below reflect dependency-manifest, supply-chain, and auth-posture "
+            "signals only — no source code was reviewed for this package.[/yellow]"
+        )
 
     console.rule("[bold blue]Score[/bold blue]")
     score_report = calculate_score_report(result.findings)
     remediations = cli_reporter.build_remediations(result.findings)
-    verdict = build_verdict(score_report)
+    verdict = build_verdict(score_report, result.files_scanned)
     cli_reporter.print_verdict(console, verdict)
     cli_reporter.print_full_report(console, score_report, remediations, plugins.unregistered_known_modules())
 

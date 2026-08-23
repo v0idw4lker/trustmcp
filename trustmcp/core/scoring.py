@@ -40,6 +40,14 @@ FOUNDATION_PENALTY_EXTRA: dict[str, int] = {
     "auth.no-mechanism-detected": 10,
 }
 
+# Many instances of the identical rule_id (e.g. a dozen ordinary ^/~ semver
+# ranges in package.json) are one repeated PATTERN, not independent security
+# failures. Letting per-instance severity weights compound without bound lets
+# finding VOLUME outweigh finding SEVERITY — idiomatic, low-risk practice
+# repeated a dozen times could otherwise outscore a single CRITICAL finding.
+# Applies uniformly to every rule_id; deliberately not special-cased per rule.
+MAX_SCORED_INSTANCES_PER_RULE = 5
+
 # Explicit mapping: rule_id -> OWASP MCP Top 10 (MCP01:2025-MCP10:2025).
 # Source: owasp.org/www-project-mcp-top-10 (beta; categories are stable,
 # descriptions may still evolve).
@@ -128,9 +136,16 @@ def calculate_score_report(findings: list[Finding]) -> ScoreReport:
         if rule_id in rule_ids_present:
             score -= extra_penalty
 
+    scored_instance_count: dict[str, int] = {}
     for f in findings:
         f.owasp_category = OWASP_CATEGORY_MAP.get(f.rule_id, f.owasp_category)
-        score -= SEVERITY_WEIGHTS.get(f.severity, 8)
+        count = scored_instance_count.get(f.rule_id, 0)
+        if count < MAX_SCORED_INSTANCES_PER_RULE:
+            score -= SEVERITY_WEIGHTS.get(f.severity, 8)
+            scored_instance_count[f.rule_id] = count + 1
+        # Beyond MAX_SCORED_INSTANCES_PER_RULE, further instances of the same
+        # rule_id still appear in findings/severity_summary/owasp_coverage
+        # below (nothing is hidden) — only the numeric score deduction caps out.
 
     score = max(0, score)
     grade = _grade_for(score)

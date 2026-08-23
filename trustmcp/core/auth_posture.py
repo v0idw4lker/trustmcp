@@ -52,16 +52,17 @@ ENV_TOKEN_USAGE = re.compile(
 @dataclass
 class AuthPostureResult:
     target_directory: str
-    mechanism: str = "unknown"  # "oauth2.1" | "static-api-key" | "env-var-token" | "unknown-but-enforced" | "none-detected"
+    mechanism: str = "unknown"  # "oauth2.1" | "static-api-key" | "env-var-token" | "unknown-but-enforced" | "none-detected" | "undetermined"
     confidence: int = 0
     evidence: list[str] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
 
 
-def _scan_source_for_auth_evidence(target_directory: str) -> tuple[set[str], list[str]]:
-    """Returns (mechanism signals found, human-readable evidence lines)."""
+def _scan_source_for_auth_evidence(target_directory: str) -> tuple[set[str], list[str], int]:
+    """Returns (mechanism signals found, human-readable evidence lines, count of .py files actually walked)."""
     signals: set[str] = set()
     evidence: list[str] = []
+    py_files_found = 0
 
     # Scoped to .py source only, deliberately — every pattern below (the
     # os.getenv(...) call shape, the jwt.decode/encode calls, the "=="
@@ -87,6 +88,7 @@ def _scan_source_for_auth_evidence(target_directory: str) -> tuple[set[str], lis
                 is_self = False
             if is_self:
                 continue
+            py_files_found += 1
             try:
                 with open(full_path, "r", encoding="utf-8-sig", errors="ignore") as fh:
                     content = fh.read()
@@ -103,7 +105,7 @@ def _scan_source_for_auth_evidence(target_directory: str) -> tuple[set[str], lis
                 signals.add("env-var-token")
                 evidence.append(f"{full_path}: an auth-related token is read from an environment variable.")
 
-    return signals, evidence
+    return signals, evidence, py_files_found
 
 
 def analyze_auth_posture(
@@ -116,7 +118,7 @@ def analyze_auth_posture(
     objects for weak or missing mechanisms.
     """
     result = AuthPostureResult(target_directory=target_directory)
-    signals, evidence = _scan_source_for_auth_evidence(target_directory)
+    signals, evidence, py_files_found = _scan_source_for_auth_evidence(target_directory)
     result.evidence.extend(evidence)
 
     dynamic_results = dynamic_results or []
@@ -152,9 +154,18 @@ def analyze_auth_posture(
     elif dynamic_auth_enforced is False:
         result.mechanism = "none-detected"
         result.confidence = 90
-    else:
+    elif py_files_found > 0:
+        # Static evidence-gathering genuinely ran against real Python source
+        # and found nothing — a real, if lower-confidence, signal.
         result.mechanism = "none-detected"
         result.confidence = 40
+    else:
+        # There was nothing for this module to examine at all: no Python
+        # source to scan, and no live dynamic probe. Asserting "no auth
+        # mechanism" here would be a false claim of an information gap, not
+        # a real absence-of-evidence signal — see FIX 2 in the project notes.
+        result.mechanism = "undetermined"
+        result.confidence = 15
 
     # --- Findings -------------------------------------------------------------
     if result.mechanism == "none-detected":
@@ -178,6 +189,19 @@ def analyze_auth_posture(
             ),
             severity=Severity.MEDIUM, confidence=result.confidence, location=target_directory,
             remediation="Migrate to OAuth 2.1 with short-lived, scoped tokens. If a static key must remain, compare it with a constant-time function (e.g. hmac.compare_digest) and rotate it regularly.",
+        ))
+    elif result.mechanism == "undetermined":
+        result.findings.append(Finding(
+            module="auth-posture", rule_id="auth.posture-undetermined", title="Authentication posture could not be determined",
+            description=(
+                "No Python source files were found to statically examine, and no live dynamic probe was run "
+                "against this server. This is NOT evidence that authentication is missing — it means this "
+                "module had nothing to look at (static analysis only covers Python today, and `trustmcp check` "
+                "never executes downloaded packages). The auth.no-mechanism-detected finding is deliberately not "
+                "raised here, since that would falsely claim an observed absence."
+            ),
+            severity=Severity.LOW, confidence=result.confidence, location=target_directory,
+            remediation="Verify the server's authentication mechanism directly (read its documentation/source in its native language, or run `trustmcp scan --target ...` against a live instance) before relying on this report for that judgment.",
         ))
     elif result.mechanism == "env-var-token":
         result.findings.append(Finding(
