@@ -207,11 +207,13 @@ trustmcp scan --path . --mode static
 # Full pipeline against a fixture server
 trustmcp scan --path . --mode both --target "stdio:python3 fixtures/target_server_stdio.py"
 
-# Two fixture servers at once — a good demo of live multi-target scanning
+# Two fixture servers at once, a good demo of live multi-target scanning
 trustmcp scan --path . --mode both \
   --target "stdio:python3 fixtures/vulnerable_server_a.py" \
   --target "stdio:python3 fixtures/vulnerable_server_b.py"
 ```
+
+Scanning `.` also picks up the scanner's own source, so you'll see two real LOW findings in `trustmcp/reporters/json_reporter.py` and `sarif_reporter.py` for `open()` built from a path parameter. This is expected and already reviewed: the path comes from the CLI's own `--json-output`/`--sarif-output` flags, not external input.
 
 ### Running the test suite
 

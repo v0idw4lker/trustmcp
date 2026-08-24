@@ -18,16 +18,16 @@ console = Console()
 
 
 def setup_logging(verbose: bool = False) -> logging.Logger:
-    level = logging.DEBUG if verbose else logging.INFO
+    root_level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(
-        level=level,
+        level=root_level,
         format="%(message)s",
         datefmt="[%X]",
         handlers=[RichHandler(console=console, show_path=False, rich_tracebacks=True)],
         force=True,
     )
     logger = logging.getLogger("trustmcp")
-    logger.setLevel(level)
+    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
     return logger
 
 
