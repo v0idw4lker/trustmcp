@@ -7,8 +7,7 @@ assignees: ""
 ---
 
 **Describe the bug**
-A clear description of what's wrong — a false positive, a missed detection, a crash,
-incorrect SARIF/JSON output, etc.
+What's wrong: a false positive, a missed detection, a crash, incorrect SARIF/JSON output, whatever it is.
 
 **Command run**
 
@@ -35,5 +34,5 @@ issue. If the target is private or sensitive, describe the shape of the code tha
 triggers it instead of pasting it.
 
 **Additional context**
-Anything else relevant — e.g. whether this is a false positive/negative against a
+Anything else relevant, e.g. whether this is a false positive/negative against a
 specific rule ID (`static.*` / `dynamic.*` / `auth.*`).
